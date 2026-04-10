@@ -7,8 +7,9 @@ from pathlib import Path
 @dataclass
 class Settings:
     api_key: str = ""
-    model: str = "claude-sonnet-4-20250514"
-    max_tokens: int = 200000
+    base_url: str = "https://api-inference.modelscope.cn/v1"
+    model: str = "ZhipuAI/GLM-5"
+    max_tokens: int = 128000
     permission_mode: str = "default"
 
 

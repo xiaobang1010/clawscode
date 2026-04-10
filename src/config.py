@@ -13,6 +13,7 @@ _ENV_PREFIX = "CLAWSCODE_"
 
 _ENV_KEY_MAP = {
     "CLAWSCODE_API_KEY": "api_key",
+    "CLAWSCODE_BASE_URL": "base_url",
     "CLAWSCODE_MODEL": "model",
     "CLAWSCODE_MAX_TOKENS": "max_tokens",
     "CLAWSCODE_PERMISSION_MODE": "permission_mode",
