@@ -4,13 +4,24 @@ import json
 from typing import Any, AsyncGenerator
 
 from src.api_client import StreamEvent, create_stream
+from src.compact import compact_if_needed
+from src.permissions import PermissionChecker
 from src.tool import PermissionResult, Tool, ToolResult
 
 
-async def ask_user_permission(tool: Tool, tool_input: Any, context: Any) -> ToolResult | None:
+async def ask_user_permission(
+    tool: Tool,
+    tool_input: Any,
+    context: Any,
+    permission_checker: PermissionChecker | None = None,
+) -> ToolResult | None:
     print(f"\n[权限请求] {tool.name} 想要执行：{tool_input}")
     answer = input("允许？(y/n/a=always): ").strip().lower()
-    if answer in ("y", "a"):
+    if answer == "a":
+        if permission_checker is not None:
+            permission_checker.add_allow_rule(f"{tool.name}:*")
+        return await tool.call(tool_input, context)
+    elif answer == "y":
         return await tool.call(tool_input, context)
     return None
 
@@ -21,6 +32,7 @@ async def create_query_loop(
     context: Any,
     history: list[dict],
     system_prompt: str,
+    permission_checker: PermissionChecker | None = None,
 ) -> AsyncGenerator[StreamEvent, None]:
     messages = list(history) + user_messages
 
@@ -69,11 +81,15 @@ async def create_query_loop(
             tool = tool_map[tc["name"]]
             tool_input = tool.input_schema(**json.loads(tc["arguments"]))
 
-            perm = await tool.check_permissions(tool_input, context)
+            if permission_checker is not None:
+                perm = await permission_checker.check(tool, tool_input, context)
+            else:
+                perm = await tool.check_permissions(tool_input, context)
+
             if perm == PermissionResult.DENY:
                 result = ToolResult(output="操作被拒绝", is_error=True)
             elif perm == PermissionResult.ASK:
-                result = await ask_user_permission(tool, tool_input, context)
+                result = await ask_user_permission(tool, tool_input, context, permission_checker)
                 if result is None:
                     result = ToolResult(output="用户拒绝了操作", is_error=True)
             else:
@@ -93,3 +109,5 @@ async def create_query_loop(
                     "content": result.output,
                 }
             )
+
+        messages = await compact_if_needed(messages, context.settings.max_tokens)

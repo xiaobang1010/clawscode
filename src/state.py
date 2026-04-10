@@ -11,6 +11,9 @@ class Settings:
     model: str = "ZhipuAI/GLM-5"
     max_tokens: int = 128000
     permission_mode: str = "default"
+    deny_rules: list[str] = field(default_factory=list)
+    ask_rules: list[str] = field(default_factory=list)
+    allow_rules: list[str] = field(default_factory=list)
 
 
 @dataclass
