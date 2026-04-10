@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from src.services.token_counter import count_tokens
+
 AUTOCOMPACT_BUFFER_TOKENS = 13000
 WARNING_THRESHOLD_TOKENS = 20000
 MAX_CONSECUTIVE_FAILURES = 3
+MIN_RECENT_MESSAGES = 10
 
 _consecutive_failures = 0
 
@@ -22,20 +25,21 @@ async def compact_if_needed(messages: list[dict], max_tokens: int) -> list[dict]
 
     try:
         system = [m for m in messages if m["role"] == "system"]
-        recent = [m for m in messages if m["role"] != "system"][-20:]
-        compacted = system + recent
+        non_system = [m for m in messages if m["role"] != "system"]
+
+        target_tokens = max_tokens - AUTOCOMPACT_BUFFER_TOKENS
+        recent_count = len(non_system)
+        for n in range(MIN_RECENT_MESSAGES, len(non_system) + 1):
+            candidate = system + non_system[-n:]
+            if count_tokens(candidate) <= target_tokens:
+                recent_count = n
+                break
+        else:
+            recent_count = MIN_RECENT_MESSAGES
+
+        compacted = system + non_system[-recent_count:]
         _consecutive_failures = 0
         return compacted
     except Exception:
         _consecutive_failures += 1
         return messages
-
-
-def count_tokens(messages: list[dict]) -> int:
-    import tiktoken
-
-    enc = tiktoken.encoding_for_model("gpt-4")
-    total = 0
-    for msg in messages:
-        total += len(enc.encode(str(msg)))
-    return total

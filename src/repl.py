@@ -11,6 +11,14 @@ from src.api_client import StreamEvent
 
 console = Console()
 
+MAX_ARG_DISPLAY = 100
+
+
+def _truncate_args(args_str: str) -> str:
+    if len(args_str) > MAX_ARG_DISPLAY:
+        return args_str[:MAX_ARG_DISPLAY] + "..."
+    return args_str
+
 
 async def render_stream(events: AsyncGenerator[StreamEvent, None]) -> str:
     reasoning_text = ""
@@ -32,11 +40,13 @@ async def render_stream(events: AsyncGenerator[StreamEvent, None]) -> str:
                 if in_reasoning:
                     in_reasoning = False
                     answer_text = ""
+                    live.update(Text())
                 answer_text += event.data.get("text", "")
                 live.update(Markdown(answer_text))
 
             elif event.type == "tool_calls":
-                live.update(f"\n🔧 调用工具: {event.data['name']}")
+                args_preview = _truncate_args(event.data.get("arguments", ""))
+                live.update(Text(f"\n🔧 调用工具: {event.data['name']}", style="bold yellow"), Text(f"  {args_preview}", style="dim"))
 
             elif event.type == "message_stop":
                 live.update(Markdown(answer_text))

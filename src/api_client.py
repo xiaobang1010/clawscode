@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import AsyncGenerator
 
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
 
 @dataclass
@@ -37,7 +38,24 @@ async def create_stream(
     if tools:
         kwargs["tools"] = tools
 
-    response = await client.chat.completions.create(**kwargs)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = await client.chat.completions.create(**kwargs)
+            break
+        except RateLimitError as exc:
+            last_exc = exc
+        except APIStatusError as exc:
+            if exc.status_code in (429, 500, 503):
+                last_exc = exc
+            else:
+                raise
+        else:
+            continue
+        await asyncio.sleep(2**attempt)
+    else:
+        raise last_exc
+
     async for chunk in response:
         if not chunk.choices:
             continue
