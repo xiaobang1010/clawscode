@@ -31,7 +31,14 @@ async def create_query_loop(
         has_tool_calls = False
         current_tool_calls: dict[int, dict] = {}
 
-        async for event in create_stream(messages, tool_schemas, system_prompt):
+        async for event in create_stream(
+            messages,
+            tool_schemas,
+            system_prompt,
+            model=context.settings.model,
+            api_key=context.settings.api_key,
+            base_url=context.settings.base_url,
+        ):
             yield event
 
             if event.type == "tool_calls":
