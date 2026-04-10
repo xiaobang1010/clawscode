@@ -28,6 +28,7 @@ def load_config() -> Settings:
     merged = merge_settings(global_config, project_config, env_config)
     return Settings(
         api_key=merged.get("api_key", ""),
+        base_url=merged.get("base_url", Settings.base_url),
         model=merged.get("model", Settings.model),
         max_tokens=int(merged.get("max_tokens", Settings.max_tokens)),
         permission_mode=merged.get("permission_mode", Settings.permission_mode),
