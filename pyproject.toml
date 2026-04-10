@@ -13,6 +13,7 @@ dependencies = [
     "prompt-toolkit>=3.0",
     "tiktoken>=0.7",
     "python-dotenv>=1.0",
+    "mcp>=1.0",
 ]
 
 [project.scripts]

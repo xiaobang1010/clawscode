@@ -22,20 +22,22 @@ _ENV_KEY_MAP = {
 }
 
 
-def load_config() -> Settings:
+def load_config() -> tuple[Settings, dict[str, dict]]:
     _load_dotenv_files()
     global_config = load_settings(_GLOBAL_CONFIG_DIR / "settings.json")
     project_config = load_settings(_PROJECT_CONFIG_DIR / "settings.json")
     env_config = _load_env_config()
 
     merged = merge_settings(global_config, project_config, env_config)
-    return Settings(
+    mcp_servers = merged.get("mcp_servers", {})
+    settings = Settings(
         api_key=merged.get("api_key", ""),
         base_url=merged.get("base_url", Settings.base_url),
         model=merged.get("model", Settings.model),
         max_tokens=int(merged.get("max_tokens", Settings.max_tokens)),
         permission_mode=merged.get("permission_mode", Settings.permission_mode),
     )
+    return (settings, mcp_servers)
 
 
 def _load_dotenv_files() -> None:
