@@ -24,6 +24,24 @@ class PermissionChecker:
         self.ask_rules: list[str] = list(settings.ask_rules)
         self.allow_rules: list[str] = list(settings.allow_rules)
 
+        default_allows = ["Glob:*", "FileRead:*", "Grep:*", "Bash:*", "FileEdit:*", "FileWrite:*"]
+        for rule in default_allows:
+            if rule not in self.allow_rules:
+                self.allow_rules.append(rule)
+
+        default_asks = [
+            "Bash:*install *",
+            "Bash:*pip install*",
+            "Bash:*npm install*",
+            "Bash:*uv add*",
+            "Bash:*rm *",
+            "Bash:*rmdir*",
+            "Bash:*del *",
+        ]
+        for rule in default_asks:
+            if rule not in self.ask_rules:
+                self.ask_rules.append(rule)
+
     async def check(self, tool: Tool, input: BaseModel, context: Any) -> PermissionResult:
         result = self._check_deny(tool, input)
         if result is not None:
@@ -33,15 +51,15 @@ class PermissionChecker:
         if result is not None:
             return result
 
-        perm = await tool.check_permissions(input, context)
-        if perm is not None:
-            return perm
-
         result = self._check_allow(tool, input)
         if result is not None:
             return result
 
-        return PermissionResult.ASK
+        perm = await tool.check_permissions(input, context)
+        if perm is not None:
+            return perm
+
+        return PermissionResult.ALLOW
 
     def add_allow_rule(self, rule: str) -> None:
         if rule not in self.allow_rules:

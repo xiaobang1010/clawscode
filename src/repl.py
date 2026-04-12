@@ -3,9 +3,7 @@ from __future__ import annotations
 from typing import AsyncGenerator
 
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
-from rich.text import Text
 
 from src.api_client import StreamEvent
 
@@ -24,34 +22,33 @@ async def render_stream(events: AsyncGenerator[StreamEvent, None]) -> str:
     reasoning_text = ""
     answer_text = ""
     in_reasoning = False
+    reasoning_printed = False
 
-    with Live(console=console, refresh_per_second=10) as live:
-        async for event in events:
-            if event.type == "reasoning_delta":
-                in_reasoning = True
-                reasoning_text += event.data.get("text", "")
-                display = Text()
-                if reasoning_text:
-                    display.append("🧠 思考中...\n", style="dim italic")
-                    display.append(reasoning_text, style="dim")
-                live.update(display)
+    async for event in events:
+        if event.type == "reasoning_delta":
+            in_reasoning = True
+            reasoning_text += event.data.get("text", "")
+            if not reasoning_printed:
+                reasoning_printed = True
+                console.print("🧠 思考中...", style="dim")
 
-            elif event.type == "text_delta":
-                if in_reasoning:
-                    in_reasoning = False
-                    answer_text = ""
-                    live.update(Text())
-                answer_text += event.data.get("text", "")
-                live.update(Markdown(answer_text))
+        elif event.type == "text_delta":
+            if in_reasoning:
+                in_reasoning = False
+                answer_text = ""
+            answer_text += event.data.get("text", "")
 
-            elif event.type == "checkpoint":
-                live.update(Text(f"\n📌 checkpoint #{event.data['index']}", style="bold cyan"))
+        elif event.type == "checkpoint":
+            console.print(f"📌 checkpoint #{event.data['index']}", style="bold cyan")
 
-            elif event.type == "tool_calls":
-                args_preview = _truncate_args(event.data.get("arguments", ""))
-                live.update(Text(f"\n🔧 调用工具: {event.data['name']}", style="bold yellow"), Text(f"  {args_preview}", style="dim"))
+        elif event.type == "tool_call_summary":
+            args_preview = _truncate_args(event.data.get("arguments", ""))
+            console.print(f"🔧 调用工具: {event.data['name']}  {args_preview}", style="bold yellow")
 
-            elif event.type == "message_stop":
-                live.update(Markdown(answer_text))
+        elif event.type == "message_stop":
+            pass
+
+    if answer_text:
+        console.print(Markdown(answer_text))
 
     return answer_text

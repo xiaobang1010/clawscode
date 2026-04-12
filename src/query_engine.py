@@ -63,10 +63,17 @@ async def create_query_loop(
                         "name": event.data["name"],
                         "arguments": "",
                     }
-                current_tool_calls[idx]["arguments"] += event.data.get("arguments", "")
+                current_tool_calls[idx]["arguments"] += event.data.get("arguments") or ""
 
         if not has_tool_calls:
             break
+
+        for idx in sorted(current_tool_calls):
+            tc = current_tool_calls[idx]
+            yield StreamEvent(
+                type="tool_call_summary",
+                data={"name": tc["name"], "arguments": tc["arguments"]},
+            )
 
         assistant_content = []
         for idx in sorted(current_tool_calls):

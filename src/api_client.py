@@ -73,6 +73,7 @@ async def create_stream(
                     type="tool_calls",
                     data={
                         "id": tc.id,
+                        "index": tc.index,
                         "name": tc.function.name,
                         "arguments": tc.function.arguments,
                     },

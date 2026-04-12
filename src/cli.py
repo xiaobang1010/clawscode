@@ -59,7 +59,9 @@ async def _run_repl(state: AppState, initial_prompt: str | None = None) -> None:
     from src.commands import CommandRegistry, register_commands
     from src.repl import console
 
-    session = PromptSession(history=FileHistory(str(state.cwd / ".clawscode" / "history")))
+    history_dir = state.cwd / ".clawscode"
+    history_dir.mkdir(exist_ok=True)
+    session = PromptSession(history=FileHistory(str(history_dir / "history")))
     registry = CommandRegistry()
     register_commands(registry)
 
