@@ -7,6 +7,7 @@ from src.api_client import StreamEvent, create_stream
 from src.compact import compact_if_needed
 from src.permissions import PermissionChecker
 from src.tool import PermissionResult, Tool, ToolResult
+from src.utils.git import is_git_repo, has_changes, create_checkpoint
 
 
 async def ask_user_permission(
@@ -79,6 +80,15 @@ async def create_query_loop(
             )
 
             tool = tool_map[tc["name"]]
+
+            if tool.name in ("FileEdit", "FileWrite"):
+                cwd = getattr(context, "cwd", None)
+                if cwd is not None and is_git_repo(cwd):
+                    if has_changes(cwd):
+                        context.checkpoint_count += 1
+                        create_checkpoint(cwd, context.checkpoint_count)
+                        yield StreamEvent(type="checkpoint", data={"index": context.checkpoint_count})
+
             tool_input = tool.input_schema(**json.loads(tc["arguments"]))
 
             if permission_checker is not None:

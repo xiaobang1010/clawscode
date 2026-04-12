@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Awaitable
 
+from src.utils.git import is_git_repo, undo_checkpoint, undo_all_checkpoints, get_diff, get_checkpoint_log
+
 
 class CommandRegistry:
     def __init__(self) -> None:
@@ -96,9 +98,64 @@ def register_commands(registry: CommandRegistry) -> None:
             lines.append(f"  {name}: {st}")
         return "\n".join(lines)
 
+    async def undo_command(args: str, context: Any) -> str:
+        count = getattr(context, "checkpoint_count", 0)
+        if count <= 0:
+            return "没有可撤销的 AI 修改"
+        cwd = getattr(context, "cwd", None)
+        if cwd is None:
+            return "无法获取工作目录"
+        if undo_checkpoint(cwd):
+            context.checkpoint_count = count - 1
+            return f"✅ 已撤销最近一次修改 (剩余 {context.checkpoint_count} 个 checkpoint)"
+        return "撤销失败"
+
+    async def undo_all_command(args: str, context: Any) -> str:
+        count = getattr(context, "checkpoint_count", 0)
+        if count <= 0:
+            return "没有可撤销的 AI 修改"
+        answer = input(f"确认撤销全部 {count} 次 AI 修改？(y/n): ").strip().lower()
+        if answer != "y":
+            return "已取消"
+        cwd = getattr(context, "cwd", None)
+        if cwd is None:
+            return "无法获取工作目录"
+        if undo_all_checkpoints(cwd, count):
+            context.checkpoint_count = 0
+            return f"✅ 已撤销全部 AI 修改 (共 {count} 次)"
+        return "撤销失败"
+
+    async def diff_command(args: str, context: Any) -> str:
+        cwd = getattr(context, "cwd", None)
+        if cwd is None or not is_git_repo(cwd):
+            return "当前目录不是 git 仓库"
+        diff = get_diff(cwd)
+        if diff is None:
+            return "没有检测到文件改动"
+        return diff
+
+    async def log_command(args: str, context: Any) -> str:
+        count = getattr(context, "checkpoint_count", 0)
+        if count <= 0:
+            return "本次会话没有 AI 修改记录"
+        cwd = getattr(context, "cwd", None)
+        if cwd is None:
+            return "无法获取工作目录"
+        entries = get_checkpoint_log(cwd, count)
+        if not entries:
+            return "本次会话没有 AI 修改记录"
+        lines = ["AI 修改记录："]
+        for i, entry in enumerate(entries, 1):
+            lines.append(f"  #{i} {entry['hash']} {entry['message']}")
+        return "\n".join(lines)
+
     registry.register("help", help_command)
     registry.register("clear", clear_command)
     registry.register("config", config_command)
     registry.register("compact", compact_command)
     registry.register("model", model_command)
     registry.register("mcp", mcp_command)
+    registry.register("undo", undo_command)
+    registry.register("undo-all", undo_all_command)
+    registry.register("diff", diff_command)
+    registry.register("log", log_command)

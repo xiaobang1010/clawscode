@@ -23,3 +23,4 @@ class AppState:
     messages: list = field(default_factory=list)
     tools: list = field(default_factory=list)
     mcp_servers: dict = field(default_factory=dict)
+    checkpoint_count: int = 0
