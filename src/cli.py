@@ -20,17 +20,22 @@ def main(
     model: str = typer.Option(None, "--model", "-m", help="模型名称"),
     version: bool = typer.Option(False, "--version", "-v", help="显示版本号"),
     print_mode: bool = typer.Option(False, "--print", help="非交互模式，输出结果后退出"),
+    resume: str = typer.Option(None, "--resume", "-r", help="恢复历史会话（会话 ID 或 'latest'）"),
 ) -> None:
     if version:
         print(f"clawscode {__version__}")
         raise typer.Exit()
 
-    asyncio.run(_run(prompt, model, print_mode))
+    asyncio.run(_run(prompt, model, print_mode, resume))
 
 
-async def _run(prompt: str | None, model: str | None, print_mode: bool) -> None:
+async def _run(prompt: str | None, model: str | None, print_mode: bool, resume: str | None) -> None:
     from src.state import AppState
     from src.config import load_config
+    from src.services.session_restore import SessionRestore
+    from src.services.session_storage import SessionStorage
+    from src.services.session_title import generate_title
+    from src.repl import console
 
     settings, mcp_servers = load_config()
     if model:
@@ -39,8 +44,30 @@ async def _run(prompt: str | None, model: str | None, print_mode: bool) -> None:
     state = AppState(settings=settings)
     state.mcp_servers = mcp_servers
 
+    if resume is not None:
+        restorer = SessionRestore()
+        session_id = None if resume == "latest" else resume
+        if session_id is None:
+            restored = restorer.restore_latest()
+        else:
+            restored = restorer.restore(session_id)
+
+        if restored is not None:
+            state.messages = restored.messages
+            state.session_id = restored.session_data.session_id
+            state.session_title = restored.session_data.title
+            console.print(f"已恢复会话: {state.session_title or state.session_id[:8]}", style="bold green")
+            console.print(f"  消息数: {len(state.messages)}", style="dim")
+        else:
+            if session_id:
+                console.print(f"未找到会话: {session_id}", style="bold red")
+            else:
+                console.print("没有可恢复的历史会话", style="bold yellow")
+
     if prompt is not None:
         state.messages.append({"role": "user", "content": prompt})
+        if not state.session_title:
+            state.session_title = generate_title(prompt)
 
     if print_mode:
         if prompt is None:

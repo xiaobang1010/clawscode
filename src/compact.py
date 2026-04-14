@@ -1,45 +1,23 @@
 from __future__ import annotations
 
-from src.services.token_counter import count_tokens
-
-AUTOCOMPACT_BUFFER_TOKENS = 13000
-WARNING_THRESHOLD_TOKENS = 20000
-MAX_CONSECUTIVE_FAILURES = 3
-MIN_RECENT_MESSAGES = 10
-
-_consecutive_failures = 0
+from src.services.compact_engine import (
+    compact_if_needed as _compact_if_needed,
+    compact_with_llm,
+    apply_compaction,
+    build_compact_messages,
+    build_partial_compact_messages,
+    create_compact_boundary_message,
+    is_compact_boundary,
+    AUTOCOMPACT_BUFFER_TOKENS,
+    WARNING_THRESHOLD_TOKENS,
+    MAX_CONSECUTIVE_FAILURES,
+    MIN_RECENT_MESSAGES,
+    BASE_COMPACT_PROMPT,
+    PARTIAL_COMPACT_PROMPT,
+    NO_TOOLS_PREAMBLE,
+    COMPACT_BOUNDARY_PREFIX,
+)
 
 
 async def compact_if_needed(messages: list[dict], max_tokens: int) -> list[dict]:
-    global _consecutive_failures
-
-    used = count_tokens(messages)
-    buffer = max_tokens - used
-
-    if buffer >= WARNING_THRESHOLD_TOKENS:
-        return messages
-
-    if _consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-        print("[警告] 上下文接近上限，自动压缩已禁用")
-        return messages
-
-    try:
-        system = [m for m in messages if m["role"] == "system"]
-        non_system = [m for m in messages if m["role"] != "system"]
-
-        target_tokens = max_tokens - AUTOCOMPACT_BUFFER_TOKENS
-        recent_count = len(non_system)
-        for n in range(MIN_RECENT_MESSAGES, len(non_system) + 1):
-            candidate = system + non_system[-n:]
-            if count_tokens(candidate) <= target_tokens:
-                recent_count = n
-                break
-        else:
-            recent_count = MIN_RECENT_MESSAGES
-
-        compacted = system + non_system[-recent_count:]
-        _consecutive_failures = 0
-        return compacted
-    except Exception:
-        _consecutive_failures += 1
-        return messages
+    return _compact_if_needed(messages, max_tokens)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import AsyncGenerator
 
@@ -34,6 +35,7 @@ async def create_stream(
         "messages": openai_messages,
         "max_tokens": 16384,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     if tools:
         kwargs["tools"] = tools
@@ -55,6 +57,8 @@ async def create_stream(
         await asyncio.sleep(2**attempt)
     else:
         raise last_exc
+
+    start_time = time.monotonic()
 
     async for chunk in response:
         if not chunk.choices:
@@ -79,5 +83,18 @@ async def create_stream(
                     },
                 )
 
-        if chunk.choices[0].finish_reason == "stop":
+        finish_reason = chunk.choices[0].finish_reason
+        if finish_reason == "stop":
             yield StreamEvent(type="message_stop", data={})
+        elif finish_reason == "tool_calls":
+            yield StreamEvent(type="tool_calls_done", data={})
+        if finish_reason is not None:
+            yield StreamEvent(type="finish_reason", data={"reason": finish_reason})
+
+        if hasattr(chunk, "usage") and chunk.usage:
+            yield StreamEvent(type="usage", data={
+                "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
+                "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
+                "duration_ms": (time.monotonic() - start_time) * 1000,
+                "model": model,
+            })

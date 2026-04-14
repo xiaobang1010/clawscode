@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+from enum import IntEnum
+from pathlib import Path
+from typing import Any
+
+from src.tool import Tool
+
+
+class PromptPriority(IntEnum):
+    DEFAULT = 0
+    CUSTOM = 10
+    AGENT = 20
+    COORDINATOR = 30
+    OVERRIDE = 40
+
+
+DEFAULT_SYSTEM_TEMPLATE = """你是一个强大的 AI 编程助手，运行在 ClawsCode 环境中。
+
+## 核心能力
+- 阅读和分析代码库
+- 编写和修改代码
+- 执行命令和脚本
+- 搜索文件和内容
+- 管理项目任务
+
+## 工作原则
+- 优先使用现有代码库中的模式和约定
+- 遵循安全最佳实践，不暴露或记录密钥
+- 在修改代码前先理解上下文
+- 使用工具完成任务，不要虚构信息
+
+{environment_info}
+
+{tools_section}
+
+{custom_instructions}"""
+
+AGENT_SYSTEM_TEMPLATE = """{base_prompt}
+
+## Agent 配置
+- Agent 名称：{agent_name}
+- Agent 类型：{agent_type}
+- 使用场景：{when_to_use}
+- 可用工具：{allowed_tools}
+- 禁用工具：{disallowed_tools}"""
+
+COORDINATOR_SYSTEM_TEMPLATE = """{base_prompt}
+
+## Coordinator 模式
+你是一个协调者 Agent，负责管理多个子 Agent 的协作。
+
+### 职责
+1. 分析用户请求，拆分为子任务
+2. 为每个子任务分配合适的 Agent
+3. 监控 Agent 执行进度
+4. 汇总各 Agent 的结果
+5. 向用户报告最终结果
+
+### 规则
+- 确保子任务之间没有冲突
+- 合理分配工作量
+- 处理 Agent 之间的依赖关系"""
+
+
+class PromptBuilder:
+    def __init__(self, cwd: Path, tools: list[Tool] | None = None):
+        self._cwd = cwd
+        self._tools = tools or []
+        self._layers: dict[PromptPriority, str] = {}
+        self._agent_config: dict[str, Any] | None = None
+        self._is_coordinator = False
+        self._custom_instructions = ""
+
+    def set_custom_instructions(self, instructions: str) -> PromptBuilder:
+        self._custom_instructions = instructions
+        if instructions:
+            self._layers[PromptPriority.CUSTOM] = instructions
+        return self
+
+    def set_agent_config(
+        self,
+        name: str,
+        agent_type: str,
+        when_to_use: str = "",
+        allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
+    ) -> PromptBuilder:
+        self._agent_config = {
+            "name": name,
+            "type": agent_type,
+            "when_to_use": when_to_use,
+            "allowed_tools": allowed_tools or [],
+            "disallowed_tools": disallowed_tools or [],
+        }
+        return self
+
+    def set_coordinator_mode(self, enabled: bool = True) -> PromptBuilder:
+        self._is_coordinator = enabled
+        return self
+
+    def set_override(self, prompt: str) -> PromptBuilder:
+        if prompt:
+            self._layers[PromptPriority.OVERRIDE] = prompt
+        return self
+
+    def build(self, environment_info: str = "") -> str:
+        if PromptPriority.OVERRIDE in self._layers:
+            return self._layers[PromptPriority.OVERRIDE]
+
+        base_prompt = self._build_base(environment_info)
+
+        if self._is_coordinator:
+            base_prompt = self._build_coordinator(base_prompt)
+        elif self._agent_config:
+            base_prompt = self._build_agent(base_prompt)
+
+        return base_prompt
+
+    def _build_base(self, environment_info: str) -> str:
+        tools_section = self._build_tools_section()
+        custom = self._layers.get(PromptPriority.CUSTOM, self._custom_instructions)
+
+        return DEFAULT_SYSTEM_TEMPLATE.format(
+            environment_info=environment_info,
+            tools_section=tools_section,
+            custom_instructions=custom,
+        )
+
+    def _build_tools_section(self) -> str:
+        if not self._tools:
+            return ""
+
+        lines = ["## 可用工具", ""]
+        for tool in self._tools:
+            name = getattr(tool, "user_facing_name", None) or tool.name
+            desc = tool.description.split("\n")[0] if tool.description else ""
+            readonly = " (只读)" if getattr(tool, "is_readonly", False) else ""
+            lines.append(f"- **{name}**{readonly}: {desc}")
+
+        return "\n".join(lines)
+
+    def _build_agent(self, base_prompt: str) -> str:
+        if not self._agent_config:
+            return base_prompt
+
+        cfg = self._agent_config
+        return AGENT_SYSTEM_TEMPLATE.format(
+            base_prompt=base_prompt,
+            agent_name=cfg["name"],
+            agent_type=cfg["type"],
+            when_to_use=cfg["when_to_use"],
+            allowed_tools=", ".join(cfg["allowed_tools"]) or "全部",
+            disallowed_tools=", ".join(cfg["disallowed_tools"]) or "无",
+        )
+
+    def _build_coordinator(self, base_prompt: str) -> str:
+        return COORDINATOR_SYSTEM_TEMPLATE.format(base_prompt=base_prompt)
+
+
+def build_system_prompt(
+    cwd: Path,
+    tools: list[Tool],
+    environment_info: str = "",
+    custom_instructions: str = "",
+    agent_config: dict[str, Any] | None = None,
+    is_coordinator: bool = False,
+    override_prompt: str = "",
+) -> str:
+    builder = PromptBuilder(cwd, tools)
+
+    if custom_instructions:
+        builder.set_custom_instructions(custom_instructions)
+    if override_prompt:
+        builder.set_override(override_prompt)
+    if is_coordinator:
+        builder.set_coordinator_mode()
+    if agent_config:
+        builder.set_agent_config(**agent_config)
+
+    return builder.build(environment_info=environment_info)

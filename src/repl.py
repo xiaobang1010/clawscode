@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import AsyncGenerator
 
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.text import Text
 
 from src.api_client import StreamEvent
 
@@ -23,6 +26,8 @@ async def render_stream(events: AsyncGenerator[StreamEvent, None]) -> str:
     answer_text = ""
     in_reasoning = False
     reasoning_printed = False
+    total_input_tokens = 0
+    total_output_tokens = 0
 
     async for event in events:
         if event.type == "reasoning_delta":
@@ -45,10 +50,72 @@ async def render_stream(events: AsyncGenerator[StreamEvent, None]) -> str:
             args_preview = _truncate_args(event.data.get("arguments", ""))
             console.print(f"🔧 调用工具: {event.data['name']}  {args_preview}", style="bold yellow")
 
+        elif event.type == "usage":
+            total_input_tokens += event.data.get("input_tokens", 0)
+            total_output_tokens += event.data.get("output_tokens", 0)
+            duration = event.data.get("duration_ms", 0)
+            if duration > 0:
+                console.print(
+                    f"📊 Tokens: {total_input_tokens}+{total_output_tokens} | Time: {duration:.0f}ms",
+                    style="dim",
+                )
+
         elif event.type == "message_stop":
+            pass
+
+        elif event.type == "tool_calls_done":
+            pass
+
+        elif event.type == "finish_reason":
             pass
 
     if answer_text:
         console.print(Markdown(answer_text))
 
     return answer_text
+
+
+def render_todo_list(todo_list: list) -> None:
+    if not todo_list:
+        return
+    lines = []
+    for item in todo_list:
+        status_icons = {
+            "pending": "⏳",
+            "in_progress": "🔄",
+            "completed": "✅",
+        }
+        icon = status_icons.get(item.status, "⏳")
+        priority_styles = {
+            "high": "bold red",
+            "medium": "yellow",
+            "low": "dim",
+        }
+        style = priority_styles.get(item.priority, "")
+        lines.append(f"  {icon} [{style}]{item.content}[/{style}]")
+    console.print(Panel("\n".join(lines), title="Todo List", border_style="blue"))
+
+
+AGENT_COLORS = [
+    "bold cyan",
+    "bold magenta",
+    "bold green",
+    "bold yellow",
+    "bold blue",
+    "bold red",
+]
+_agent_color_map: dict[str, str] = {}
+_agent_color_index = 0
+
+
+def get_agent_color(agent_name: str) -> str:
+    global _agent_color_index
+    if agent_name not in _agent_color_map:
+        _agent_color_map[agent_name] = AGENT_COLORS[_agent_color_index % len(AGENT_COLORS)]
+        _agent_color_index += 1
+    return _agent_color_map[agent_name]
+
+
+def render_agent_output(agent_name: str, text: str) -> None:
+    color = get_agent_color(agent_name)
+    console.print(f"[{color}]-agent {agent_name}:[/{color}] {text}")
