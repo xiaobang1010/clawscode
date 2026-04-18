@@ -21,7 +21,7 @@ def get_tools() -> list[Tool]:
     from src.tools.tool_search import ToolSearchTool
     from src.tools.web_fetch import WebFetchTool
     from src.tools.web_search import WebSearchTool
-    from src.agents.swarm import TeamCreateTool, TeamDeleteTool, TeamListTool
+    from src.agents.swarm import TeamCreateTool, TeamDeleteTool, TeamListTool, SwarmDispatchTool
 
     tools = [
         AgentTool(),
@@ -44,6 +44,7 @@ def get_tools() -> list[Tool]:
         TeamCreateTool(),
         TeamDeleteTool(),
         TeamListTool(),
+        SwarmDispatchTool(),
     ]
 
     return [t for t in tools if t.is_available()]

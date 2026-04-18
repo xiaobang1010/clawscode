@@ -128,3 +128,63 @@ class TeamListTool(Tool):
             lines.append(f"- 团队 '{team.name}' (ID: {team.team_id}): {members}")
 
         return ToolResult(output="\n".join(lines))
+
+
+class SwarmDispatchTool(Tool):
+    name = "SwarmDispatch"
+    description = "将任务分发给 Swarm 团队成员执行，支持并行或串行模式。"
+    input_schema = SwarmDispatchInput
+    is_readonly = False
+
+    async def _execute_member(self, member: SwarmMember, task: str) -> str:
+        from src.tools import get_tools
+
+        all_tools = get_tools()
+        builder = AgentBuilder(all_tools)
+        tools = builder.build_tools(member.definition)
+        system_prompt = builder.build_system_prompt(member.definition)
+        tool_schemas = [t.get_openai_tool_schema() for t in tools]
+
+        messages = [{"role": "user", "content": task}]
+
+        collected: list[str] = []
+        model = member.definition.get_model_override() or "ZhipuAI/GLM-5"
+        async for event in create_stream(
+            messages=messages,
+            tools=tool_schemas,
+            system=system_prompt,
+            model=model,
+        ):
+            if event.type == "text_delta":
+                collected.append(event.data["text"])
+
+        return "".join(collected)
+
+    async def call(self, input: SwarmDispatchInput, context: Any) -> ToolResult:
+        team = _teams.get(input.team_id)
+        if not team:
+            return ToolResult(
+                output=f"未找到团队: {input.team_id}",
+                is_error=True,
+            )
+
+        if not team.members:
+            return ToolResult(output="团队没有成员", is_error=True)
+
+        members = list(team.members.values())
+
+        if input.parallel:
+            results = await asyncio.gather(
+                *[self._execute_member(m, input.task) for m in members]
+            )
+        else:
+            results = []
+            for m in members:
+                result = await self._execute_member(m, input.task)
+                results.append(result)
+
+        output_parts = []
+        for member, result in zip(members, results):
+            output_parts.append(f"【{member.agent_name}】\n{result}")
+
+        return ToolResult(output="\n\n".join(output_parts))

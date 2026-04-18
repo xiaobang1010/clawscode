@@ -12,6 +12,8 @@ class FileEditInput(BaseModel):
     file_path: str = Field(description="文件路径")
     old_string: str = Field(description="要替换的原始字符串")
     new_string: str = Field(description="替换后的新字符串")
+    start_line: int | None = Field(default=None, description="起始行号（1-based），与 end_line 配合使用实现行号范围编辑")
+    end_line: int | None = Field(default=None, description="结束行号（1-based，包含该行），与 start_line 配合使用")
 
 
 class FileEditTool(Tool):
@@ -25,6 +27,23 @@ class FileEditTool(Tool):
             return ToolResult(output=f"文件不存在: {input.file_path}", is_error=True)
 
         content = path.read_text(encoding="utf-8")
+
+        if input.start_line is not None and input.end_line is not None:
+            lines = content.splitlines()
+            total = len(lines)
+            if input.start_line < 1 or input.end_line > total or input.start_line > input.end_line:
+                return ToolResult(
+                    output=f"行号范围无效: {input.start_line}-{input.end_line} (文件共 {total} 行)",
+                    is_error=True,
+                )
+            _backup_file(path, context)
+            old_range = lines[input.start_line - 1 : input.end_line]
+            new_lines = input.new_string.splitlines()
+            lines[input.start_line - 1 : input.end_line] = new_lines
+            path.write_text("\n".join(lines), encoding="utf-8")
+            return ToolResult(
+                output=f"已编辑 {input.file_path} (行 {input.start_line}-{input.end_line}, {len(old_range)} 行 -> {len(new_lines)} 行)"
+            )
 
         if input.old_string not in content:
             return ToolResult(output=f"未找到匹配的字符串", is_error=True)

@@ -8,6 +8,28 @@ from pydantic import BaseModel, Field
 
 from src.tool import Tool, ToolResult
 
+_preapproved_domains: list[str] = []
+
+
+def load_preapproved_urls(settings: Any) -> None:
+    global _preapproved_domains
+    urls = getattr(settings, 'preapproved_urls', None) or getattr(settings, 'web_fetch_preapproved', None) or []
+    _preapproved_domains = urls
+
+
+def _is_preapproved(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    for pattern in _preapproved_domains:
+        if pattern.startswith("*."):
+            if host.endswith(pattern[2:]) or host == pattern[2:]:
+                return True
+        elif host == pattern:
+            return True
+    return False
+
 
 def _html_to_markdown(html: str) -> str:
     text = html
@@ -66,5 +88,10 @@ class WebFetchTool(Tool):
         max_len = input.max_length
         if len(body) > max_len:
             body = body[:max_len] + f"\n\n...[截断，已显示 {max_len} / {len(body)} 字符]"
+
+        if _preapproved_domains:
+            preapproved = _is_preapproved(url)
+            if preapproved:
+                body += "\n\n[预批准 URL]"
 
         return ToolResult(output=body)

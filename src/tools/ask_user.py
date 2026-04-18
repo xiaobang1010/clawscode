@@ -53,7 +53,13 @@ class AskUserQuestionTool(Tool):
 
         if valid_options:
             if answer == "0":
-                return ToolResult(output=f"用户自定义输入: {answer}")
+                sys.stdout.write("请输入: ")
+                sys.stdout.flush()
+                try:
+                    custom_input = sys.stdin.readline().rstrip("\n")
+                except (EOFError, KeyboardInterrupt):
+                    return ToolResult(output="用户取消了操作", is_error=True)
+                return ToolResult(output=f"用户自定义输入: {custom_input}")
 
             try:
                 selected_idx = int(answer) - 1

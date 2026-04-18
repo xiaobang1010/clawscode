@@ -21,7 +21,9 @@ def _truncate_args(args_str: str) -> str:
     return args_str
 
 
-async def render_stream(events: AsyncGenerator[StreamEvent, None]) -> str:
+async def render_stream(
+    events: AsyncGenerator[StreamEvent, None], cost_tracker=None
+) -> str:
     reasoning_text = ""
     answer_text = ""
     in_reasoning = False
@@ -29,48 +31,72 @@ async def render_stream(events: AsyncGenerator[StreamEvent, None]) -> str:
     total_input_tokens = 0
     total_output_tokens = 0
 
-    async for event in events:
-        if event.type == "reasoning_delta":
-            in_reasoning = True
-            reasoning_text += event.data.get("text", "")
-            if not reasoning_printed:
-                reasoning_printed = True
-                console.print("🧠 思考中...", style="dim")
+    with console.status("思考中...") as status:
+        async for event in events:
+            if event.type == "reasoning_delta":
+                in_reasoning = True
+                reasoning_text += event.data.get("text", "")
+                if not reasoning_printed:
+                    reasoning_printed = True
+                status.update(f"🧠 思考中... ({len(reasoning_text)} chars)")
 
-        elif event.type == "text_delta":
-            if in_reasoning:
-                in_reasoning = False
-                answer_text = ""
-            answer_text += event.data.get("text", "")
+            elif event.type == "text_delta":
+                if in_reasoning:
+                    in_reasoning = False
+                    answer_text = ""
+                answer_text += event.data.get("text", "")
+                status.update("📝 生成回复...")
 
-        elif event.type == "checkpoint":
-            console.print(f"📌 checkpoint #{event.data['index']}", style="bold cyan")
-
-        elif event.type == "tool_call_summary":
-            args_preview = _truncate_args(event.data.get("arguments", ""))
-            console.print(f"🔧 调用工具: {event.data['name']}  {args_preview}", style="bold yellow")
-
-        elif event.type == "usage":
-            total_input_tokens += event.data.get("input_tokens", 0)
-            total_output_tokens += event.data.get("output_tokens", 0)
-            duration = event.data.get("duration_ms", 0)
-            if duration > 0:
+            elif event.type == "checkpoint":
                 console.print(
-                    f"📊 Tokens: {total_input_tokens}+{total_output_tokens} | Time: {duration:.0f}ms",
-                    style="dim",
+                    f"📌 checkpoint #{event.data['index']}", style="bold cyan"
                 )
 
-        elif event.type == "message_stop":
-            pass
+            elif event.type == "tool_call_summary":
+                args_preview = _truncate_args(event.data.get("arguments", ""))
+                console.print(
+                    f"🔧 调用工具: {event.data['name']}  {args_preview}",
+                    style="bold yellow",
+                )
+                status.update("🔧 等待工具结果...")
 
-        elif event.type == "tool_calls_done":
-            pass
+            elif event.type == "usage":
+                total_input_tokens += event.data.get("input_tokens", 0)
+                total_output_tokens += event.data.get("output_tokens", 0)
+                duration = event.data.get("duration_ms", 0)
+                if duration > 0:
+                    console.print(
+                        f"📊 Tokens: {total_input_tokens}+{total_output_tokens} | Time: {duration:.0f}ms",
+                        style="dim",
+                    )
 
-        elif event.type == "finish_reason":
-            pass
+            elif event.type == "message_stop":
+                pass
+
+            elif event.type == "tool_calls_done":
+                pass
+
+            elif event.type == "finish_reason":
+                pass
 
     if answer_text:
         console.print(Markdown(answer_text))
+
+    console.print(
+        Panel(
+            f"输入 Tokens: {total_input_tokens:,}\n输出 Tokens: {total_output_tokens:,}",
+            title="本次查询",
+            border_style="dim",
+        )
+    )
+    if cost_tracker is not None:
+        console.print(
+            Panel(
+                cost_tracker.session_summary.format(),
+                title="累计会话费用",
+                border_style="green",
+            )
+        )
 
     return answer_text
 

@@ -48,6 +48,16 @@ async def create_query_loop(
         has_tool_calls = False
         current_tool_calls: dict[int, dict] = {}
 
+        est_tokens = sum(len(json.dumps(m, ensure_ascii=False)) // 4 for m in messages)
+        max_ctx = getattr(context.settings, 'max_tokens', 128000) if hasattr(context, 'settings') else 128000
+        if est_tokens > max_ctx * 0.8:
+            messages = await compact_if_needed(messages, max_ctx)
+            est_tokens = sum(len(json.dumps(m, ensure_ascii=False)) // 4 for m in messages)
+            if est_tokens > max_ctx * 0.9:
+                trim_count = max(1, len([m for m in messages if m.get("role") != "system"]) // 4)
+                non_system = [m for m in messages if m.get("role") != "system"]
+                messages = [m for m in messages if m.get("role") == "system"] + non_system[trim_count:]
+
         async for event in create_stream(
             messages,
             tool_schemas,
