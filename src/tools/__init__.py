@@ -16,6 +16,7 @@ def get_tools() -> list[Tool]:
     from src.tools.glob import GlobTool
     from src.tools.grep import GrepTool
     from src.tools.send_message import SendMessageTool
+    from src.tools.skill_tool import SkillTool
     from src.tools.sleep_tool import SleepTool
     from src.tools.task_output import TaskOutputTool
     from src.tools.task_stop import TaskStopTool
@@ -41,6 +42,7 @@ def get_tools() -> list[Tool]:
         ToolSearchTool(),
         SleepTool(),
         SendMessageTool(),
+        SkillTool(),
         TaskOutputTool(),
         TaskStopTool(),
         EnterPlanModeTool(),

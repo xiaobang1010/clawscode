@@ -71,6 +71,7 @@ class PromptBuilder:
         self._agent_config: dict[str, Any] | None = None
         self._is_coordinator = False
         self._custom_instructions = ""
+        self._skills_section = ""
 
     def set_custom_instructions(self, instructions: str) -> PromptBuilder:
         self._custom_instructions = instructions
@@ -104,6 +105,10 @@ class PromptBuilder:
             self._layers[PromptPriority.OVERRIDE] = prompt
         return self
 
+    def set_skills_section(self, skills_section: str) -> PromptBuilder:
+        self._skills_section = skills_section
+        return self
+
     def build(self, environment_info: str = "") -> str:
         if PromptPriority.OVERRIDE in self._layers:
             return self._layers[PromptPriority.OVERRIDE]
@@ -120,12 +125,13 @@ class PromptBuilder:
     def _build_base(self, environment_info: str) -> str:
         tools_section = self._build_tools_section()
         custom = self._layers.get(PromptPriority.CUSTOM, self._custom_instructions)
+        skills = self._skills_section
 
         return DEFAULT_SYSTEM_TEMPLATE.format(
             environment_info=environment_info,
             tools_section=tools_section,
             custom_instructions=custom,
-        )
+        ) + (f"\n\n{skills}" if skills else "")
 
     def _build_tools_section(self) -> str:
         if not self._tools:
@@ -166,6 +172,7 @@ def build_system_prompt(
     agent_config: dict[str, Any] | None = None,
     is_coordinator: bool = False,
     override_prompt: str = "",
+    skills_section: str = "",
 ) -> str:
     builder = PromptBuilder(cwd, tools)
 
@@ -177,5 +184,37 @@ def build_system_prompt(
         builder.set_coordinator_mode()
     if agent_config:
         builder.set_agent_config(**agent_config)
+    if skills_section:
+        builder.set_skills_section(skills_section)
 
     return builder.build(environment_info=environment_info)
+
+
+def build_skills_section(skills_registry_or_list: Any) -> str:
+    from src.skills.types import SkillDefinition
+
+    if hasattr(skills_registry_or_list, "get_all"):
+        skills = list(skills_registry_or_list.get_all().values())
+    elif isinstance(skills_registry_or_list, list):
+        skills = skills_registry_or_list
+    else:
+        return ""
+
+    if not skills:
+        return ""
+
+    lines = ["## 可用技能（Skills）", ""]
+    lines.append("使用 Skill 工具加载技能以获得特定领域的专业指导。")
+    lines.append("")
+
+    for skill in skills:
+        if not isinstance(skill, SkillDefinition):
+            continue
+        aliases = f" (别名: {', '.join(skill.aliases)})" if skill.aliases else ""
+        lines.append(f"- **{skill.name}**{aliases}: {skill.description}")
+        lines.append(f"  使用场景：{skill.when_to_use}")
+
+    lines.append("")
+    lines.append("调用方式：使用 Skill 工具，传入技能名称或别名即可加载。")
+
+    return "\n".join(lines)
