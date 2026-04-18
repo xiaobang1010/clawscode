@@ -25,6 +25,14 @@ def get_tools() -> list[Tool]:
     from src.tools.web_fetch import WebFetchTool
     from src.tools.web_search import WebSearchTool
     from src.agents.swarm import TeamCreateTool, TeamDeleteTool, TeamListTool, SwarmDispatchTool
+    from src.tools.brief import BriefTool
+    from src.tools.notebook_edit import NotebookEditTool
+    from src.tools.lsp_tool import LSPTool
+    from src.tools.powershell import PowerShellTool
+    from src.tools.cron_create import CronCreateTool
+    from src.tools.cron_delete import CronDeleteTool
+    from src.tools.cron_list import CronListTool
+    from src.tools.workflow import WorkflowTool
 
     tools = [
         AgentTool(),
@@ -51,6 +59,14 @@ def get_tools() -> list[Tool]:
         TeamDeleteTool(),
         TeamListTool(),
         SwarmDispatchTool(),
+        BriefTool(),
+        NotebookEditTool(),
+        LSPTool(),
+        PowerShellTool(),
+        CronCreateTool(),
+        CronDeleteTool(),
+        CronListTool(),
+        WorkflowTool(),
     ]
 
     return [t for t in tools if t.is_available()]
