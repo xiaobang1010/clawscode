@@ -176,6 +176,7 @@ async def _run_query(state: AppState, user_input: str) -> None:
 
     extra_tools = getattr(state, "_extra_tools", None)
     permission_checker = PermissionChecker(state.settings)
+    state.permission_checker = permission_checker
 
     system = build_system_prompt(state.cwd, tools)
     stream = await handle_query(

@@ -17,7 +17,7 @@ class PermissionMode(str, Enum):
     AUTO = "auto"
 
 
-PLAN_READONLY_TOOLS = {"Glob", "FileRead", "Grep", "GlobTool", "ToolSearch", "SleepTool"}
+PLAN_READONLY_TOOLS = {"Glob", "FileRead", "Grep", "GlobTool", "ToolSearch", "SleepTool", "ExitPlanMode"}
 
 DEFAULT_DENY_RULES = [
     "Bash:rm -rf /*",
@@ -59,8 +59,14 @@ def is_killswitch_active() -> bool:
 
 
 class PermissionChecker:
-    def __init__(self, settings: Settings, mode: PermissionMode = PermissionMode.DEFAULT):
-        self._mode = mode
+    def __init__(self, settings: Settings, mode: PermissionMode | None = None):
+        if mode is not None:
+            self._mode = mode
+        else:
+            try:
+                self._mode = PermissionMode(settings.permission_mode)
+            except ValueError:
+                self._mode = PermissionMode.DEFAULT
         self.deny_rules: list[str] = list(DEFAULT_DENY_RULES) + list(settings.deny_rules)
         self.ask_rules: list[str] = list(DEFAULT_ASK_RULES) + list(settings.ask_rules)
         self.allow_rules: list[str] = list(settings.allow_rules)

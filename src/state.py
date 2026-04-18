@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class SessionState(str, Enum):
@@ -67,3 +68,4 @@ class AppState:
     todo_list: list[TodoItem] = field(default_factory=list)
     agent_definitions: list[dict] = field(default_factory=list)
     read_files: set[str] = field(default_factory=set)
+    permission_checker: Any = None

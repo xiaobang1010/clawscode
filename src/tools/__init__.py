@@ -8,6 +8,8 @@ def get_tools() -> list[Tool]:
     from src.tools.ask_user import AskUserQuestionTool
     from src.tools.bash import BashTool
     from src.tools.config_tool import ConfigTool
+    from src.tools.enter_plan import EnterPlanModeTool
+    from src.tools.exit_plan import ExitPlanModeTool
     from src.tools.file_edit import FileEditTool
     from src.tools.file_read import FileReadTool
     from src.tools.file_write import FileWriteTool
@@ -41,6 +43,8 @@ def get_tools() -> list[Tool]:
         SendMessageTool(),
         TaskOutputTool(),
         TaskStopTool(),
+        EnterPlanModeTool(),
+        ExitPlanModeTool(),
         TeamCreateTool(),
         TeamDeleteTool(),
         TeamListTool(),
