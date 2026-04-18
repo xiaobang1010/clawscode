@@ -6,10 +6,30 @@ from typing import Any, AsyncGenerator
 
 from src.api_client import StreamEvent, create_stream
 from src.compact import compact_if_needed
+from src.hooks.types import HookContext, HookEvent
+from src.hooks.executor import HookExecutor
+from src.hooks.registry import HookRegistry
 from src.permissions import PermissionChecker
 from src.state import SessionState
 from src.tool import PermissionResult, Tool, ToolResult, truncate_output
 from src.utils.git import is_git_repo, has_changes, create_checkpoint
+
+
+def _create_hook_context(
+    event: HookEvent,
+    context: Any,
+    tool_name: str = "",
+    tool_input: dict | None = None,
+    tool_output: str = "",
+) -> HookContext:
+    return HookContext(
+        event=event,
+        tool_name=tool_name,
+        tool_input=tool_input or {},
+        tool_output=tool_output,
+        session_id=getattr(context, "session_id", ""),
+        messages=getattr(context, "messages", []),
+    )
 
 
 async def ask_user_permission(
@@ -36,10 +56,15 @@ async def create_query_loop(
     history: list[dict],
     system_prompt: str,
     permission_checker: PermissionChecker | None = None,
+    hook_executor: HookExecutor | None = None,
 ) -> AsyncGenerator[StreamEvent, None]:
     messages = list(history) + user_messages
 
     context.session_state = SessionState.RUNNING
+
+    if hook_executor is not None:
+        hook_ctx = _create_hook_context(HookEvent.SESSION_START, context)
+        await hook_executor.execute(hook_ctx)
 
     while True:
         tool_schemas = [t.get_openai_tool_schema() for t in tools]
@@ -51,7 +76,16 @@ async def create_query_loop(
         est_tokens = sum(len(json.dumps(m, ensure_ascii=False)) // 4 for m in messages)
         max_ctx = getattr(context.settings, 'max_tokens', 128000) if hasattr(context, 'settings') else 128000
         if est_tokens > max_ctx * 0.8:
+            if hook_executor is not None:
+                pre_ctx = _create_hook_context(HookEvent.PRE_COMPACT, context)
+                await hook_executor.execute(pre_ctx)
+
             messages = await compact_if_needed(messages, max_ctx)
+
+            if hook_executor is not None:
+                post_ctx = _create_hook_context(HookEvent.POST_COMPACT, context)
+                await hook_executor.execute(post_ctx)
+
             est_tokens = sum(len(json.dumps(m, ensure_ascii=False)) // 4 for m in messages)
             if est_tokens > max_ctx * 0.9:
                 trim_count = max(1, len([m for m in messages if m.get("role") != "system"]) // 4)
@@ -88,6 +122,9 @@ async def create_query_loop(
                     )
 
         if not has_tool_calls:
+            if hook_executor is not None:
+                stop_ctx = _create_hook_context(HookEvent.STOP, context)
+                await hook_executor.execute(stop_ctx)
             context.session_state = SessionState.IDLE
             break
 
@@ -121,6 +158,19 @@ async def create_query_loop(
 
             tool_input = tool.input_schema(**json.loads(tc["arguments"]))
 
+            if hook_executor is not None:
+                pre_ctx = _create_hook_context(
+                    HookEvent.PRE_TOOL_USE, context,
+                    tool_name=tool.name,
+                    tool_input=tc.get("parsed_args", json.loads(tc["arguments"])),
+                )
+                pre_result = await hook_executor.execute_and_collect(pre_ctx)
+                if pre_result.should_block:
+                    return tc, ToolResult(
+                        output=f"操作被 Hook 阻止: {pre_result.output}",
+                        is_error=True,
+                    )
+
             if permission_checker is not None:
                 perm = await permission_checker.check(tool, tool_input, context)
             else:
@@ -140,6 +190,15 @@ async def create_query_loop(
             max_chars = getattr(tool, "max_result_size_chars", 25000)
             if len(result.output) > max_chars:
                 result = result.truncate(max_chars)
+
+            if hook_executor is not None:
+                post_ctx = _create_hook_context(
+                    HookEvent.POST_TOOL_USE, context,
+                    tool_name=tool.name,
+                    tool_input=json.loads(tc["arguments"]),
+                    tool_output=result.output,
+                )
+                await hook_executor.execute(post_ctx)
 
             return tc, result
 
@@ -168,4 +227,12 @@ async def create_query_loop(
             if tool.name in ("FileEdit", "FileWrite") and not result.is_error:
                 yield StreamEvent(type="checkpoint", data={"index": context.checkpoint_count})
 
+        if hook_executor is not None:
+            pre_compact_ctx = _create_hook_context(HookEvent.PRE_COMPACT, context)
+            await hook_executor.execute(pre_compact_ctx)
+
         messages = await compact_if_needed(messages, context.settings.max_tokens)
+
+        if hook_executor is not None:
+            post_compact_ctx = _create_hook_context(HookEvent.POST_COMPACT, context)
+            await hook_executor.execute(post_compact_ctx)
