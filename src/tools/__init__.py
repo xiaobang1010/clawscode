@@ -33,6 +33,21 @@ def get_tools() -> list[Tool]:
     from src.tools.cron_delete import CronDeleteTool
     from src.tools.cron_list import CronListTool
     from src.tools.workflow import WorkflowTool
+    from src.tools.mcp_auth import McpAuthTool
+    from src.tools.list_mcp_resources import ListMcpResourcesTool
+    from src.tools.read_mcp_resource import ReadMcpResourceTool
+    from src.tools.computer_use import (
+        BrowserScreenshotTool,
+        BrowserMouseClickTool,
+        BrowserMouseMoveTool,
+        BrowserDragTool,
+        BrowserScrollTool,
+        BrowserKeyboardTool,
+        BrowserNavigateTool,
+        BrowserLaunchTool,
+        BrowserConnectTool,
+        BrowserShutdownTool,
+    )
 
     tools = [
         AgentTool(),
@@ -67,6 +82,19 @@ def get_tools() -> list[Tool]:
         CronDeleteTool(),
         CronListTool(),
         WorkflowTool(),
+        McpAuthTool(),
+        ListMcpResourcesTool(),
+        ReadMcpResourceTool(),
+        BrowserScreenshotTool(),
+        BrowserMouseClickTool(),
+        BrowserMouseMoveTool(),
+        BrowserDragTool(),
+        BrowserScrollTool(),
+        BrowserKeyboardTool(),
+        BrowserNavigateTool(),
+        BrowserLaunchTool(),
+        BrowserConnectTool(),
+        BrowserShutdownTool(),
     ]
 
     return [t for t in tools if t.is_available()]

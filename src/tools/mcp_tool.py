@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, create_model
 
 from src.services.mcp_client import MCPClient
 from src.tool import Tool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 def _schema_to_pydantic(schema: dict, model_name: str = "DynamicInput") -> type[BaseModel]:
@@ -60,10 +63,55 @@ class MCPToolAdapter(Tool):
     async def call(self, input: BaseModel, context: Any) -> ToolResult:
         try:
             arguments = input.model_dump() if hasattr(input, "model_dump") else {}
-            output = await self._client.call_tool(self.name, arguments)
+            output = await self._call_with_elicitation(self.name, arguments)
             return ToolResult(output=output)
         except Exception as e:
             return ToolResult(output=str(e), is_error=True)
+
+    async def _call_with_elicitation(self, tool_name: str, arguments: dict) -> str:
+        try:
+            return await self._client.call_tool(tool_name, arguments)
+        except Exception as e:
+            error_str = str(e)
+            if "elicitation" in error_str.lower() or "url" in error_str.lower() and "required" in error_str.lower():
+                try:
+                    from mcp import UrlElicitationRequiredError
+                    if isinstance(e, UrlElicitationRequiredError):
+                        return await self._handle_elicitation_error(e, tool_name, arguments)
+                except ImportError:
+                    pass
+
+            elicitation_handler = self._client.elicitation_handler
+            pending = elicitation_handler.get_pending()
+            if pending:
+                for req in pending:
+                    result = await elicitation_handler.handle_elicitation(req)
+                    logger.info(f"[MCP] 已处理 Elicitation: {req.elicitation_id}")
+                return await self._client.call_tool(tool_name, arguments)
+
+            raise
+
+    async def _handle_elicitation_error(self, error: Any, tool_name: str, arguments: dict) -> str:
+        elicitation_handler = self._client.elicitation_handler
+
+        try:
+            elicitations = error.elicitations
+        except AttributeError:
+            elicitations = []
+
+        for elicitation in elicitations:
+            from src.services.mcp_client import ElicitationRequest
+
+            request = ElicitationRequest(
+                message=getattr(elicitation, "message", "MCP 服务器需要确认"),
+                url=getattr(elicitation, "url", ""),
+                elicitation_id=getattr(elicitation, "elicitationId", ""),
+                mode=getattr(elicitation, "mode", "url"),
+            )
+            await elicitation_handler.handle_elicitation(request)
+            logger.info(f"[MCP] 已自动接受 Elicitation: {request.elicitation_id}")
+
+        return await self._client.call_tool(tool_name, arguments)
 
     def get_openai_tool_schema(self) -> dict:
         return {
