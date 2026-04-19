@@ -13,12 +13,15 @@ from src.api_client import StreamEvent
 
 
 def _build_hook_executor(state: AppState) -> HookExecutor | None:
-    settings_dict = {}
-    if hasattr(state, 'settings') and hasattr(state.settings, '__dict__'):
-        settings_dict = {}
+    settings_dict: dict[str, Any] | None = None
+    if hasattr(state, 'settings') and hasattr(state.settings, 'hooks'):
+        hooks_cfg = state.settings.hooks
+        if not hooks_cfg.enabled:
+            return None
+        settings_dict = {"hooks": hooks_cfg.hooks}
     try:
         registry = HookRegistry()
-        count = load_hooks_into_registry(registry)
+        count = load_hooks_into_registry(registry, settings=settings_dict)
         if count > 0:
             return HookExecutor(registry)
     except Exception:

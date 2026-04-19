@@ -17,6 +17,7 @@ def build_context(
     agent_config: dict[str, Any] | None = None,
     is_coordinator: bool = False,
     override_prompt: str = "",
+    memory_config: Any | None = None,
 ) -> str:
     provider = ContextProvider(cwd)
     env = provider.get_environment_info()
@@ -25,7 +26,9 @@ def build_context(
     claude_md = ClaudeMdDiscovery(cwd)
     claude_md_content = claude_md.load_for_system_prompt()
 
-    memory = MemoryDiscovery(cwd)
+    memdir = getattr(memory_config, "memdir", "") if memory_config else ""
+    search_nested = getattr(memory_config, "search_nested", True) if memory_config else True
+    memory = MemoryDiscovery(cwd, memdir=memdir, search_nested=search_nested)
     memory_content = memory.load_for_system_prompt()
 
     if claude_md_content:

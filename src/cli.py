@@ -45,7 +45,8 @@ async def _run(prompt: str | None, model: str | None, print_mode: bool, resume: 
     state.mcp_servers = mcp_servers
 
     if resume is not None:
-        restorer = SessionRestore()
+        storage_path = settings.session.storage_path if hasattr(settings, "session") else ""
+        restorer = SessionRestore(storage=SessionStorage(storage_path=storage_path))
         session_id = None if resume == "latest" else resume
         if session_id is None:
             restored = restorer.restore_latest()
@@ -161,7 +162,7 @@ async def _init_mcp(state: AppState) -> Any:
 
 
 async def _run_query(state: AppState, user_input: str) -> None:
-    from src.context import build_system_prompt
+    from src.context import build_context
     from src.query import handle_query
     from src.repl import render_stream
     from src.compact import compact_if_needed
@@ -178,7 +179,7 @@ async def _run_query(state: AppState, user_input: str) -> None:
     permission_checker = PermissionChecker(state.settings)
     state.permission_checker = permission_checker
 
-    system = build_system_prompt(state.cwd, tools)
+    system = build_context(state.cwd, tools, memory_config=state.settings.memory)
     stream = await handle_query(
         user_input, state, system,
         permission_checker=permission_checker,

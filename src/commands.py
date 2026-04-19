@@ -156,9 +156,12 @@ def register_commands(registry: CommandRegistry) -> None:
 
     async def resume_command(args: str, context: Any) -> str:
         from src.services.session_restore import SessionRestore
+        from src.services.session_storage import SessionStorage
 
-        cwd = getattr(context, "cwd", None)
-        restorer = SessionRestore(home=cwd if cwd else None)
+        settings = getattr(context, "settings", None)
+        sp = settings.session.storage_path if settings and hasattr(settings, "session") else ""
+        storage = SessionStorage(storage_path=sp)
+        restorer = SessionRestore(storage=storage)
 
         if args.strip():
             session_id = args.strip()
@@ -187,7 +190,10 @@ def register_commands(registry: CommandRegistry) -> None:
 
         settings = getattr(context, "settings", None)
         model = settings.model if settings else "default"
-        tracker = CostTrackerService(model=model)
+        custom_pricing = None
+        if settings and hasattr(settings, "cost"):
+            custom_pricing = settings.cost.pricing or None
+        tracker = CostTrackerService(model=model, custom_pricing=custom_pricing)
 
         if args.strip() == "history":
             summary = tracker.get_historical_summary()
@@ -296,13 +302,16 @@ def register_commands(registry: CommandRegistry) -> None:
         return "\n".join(lines)
 
     async def agents_command(args: str, context: Any) -> str:
+        from pathlib import Path as _Path
         from src.agents.loader import AgentLoader
 
-        loader = AgentLoader()
-        agents = loader.get_all()
+        search_paths: list[_Path] = []
+        settings = getattr(context, "settings", None)
+        if settings and hasattr(settings, "agents"):
+            search_paths = [_Path(p) for p in settings.agents.search_paths]
 
-        if not agents:
-            agents = loader.load_all()
+        loader = AgentLoader(search_paths=search_paths)
+        agents = loader.load_all()
 
         if not agents:
             return "当前无可用 Agent"
@@ -331,9 +340,30 @@ def register_commands(registry: CommandRegistry) -> None:
         return "\n".join(lines)
 
     async def skills_command(args: str, context: Any) -> str:
+        from pathlib import Path as _Path
+        from src.skills.loader import SkillLoader
         from src.skills.registry import SkillRegistry
 
+        search_paths: list[_Path] = []
+        bundled_enabled = True
+        settings = getattr(context, "settings", None)
+        if settings and hasattr(settings, "skills"):
+            search_paths = [_Path(p) for p in settings.skills.search_paths]
+            bundled_enabled = settings.skills.bundled_enabled
+
+        loader = SkillLoader(search_paths=search_paths)
+        loaded = loader.load_all()
+
         reg = SkillRegistry()
+        if bundled_enabled:
+            try:
+                from src.skills.bundled import register_bundled_skills
+                register_bundled_skills(reg)
+            except Exception:
+                pass
+        for skill in loaded.values():
+            reg.register(skill)
+
         skills = reg.list_skills()
 
         if not skills:
@@ -361,10 +391,23 @@ def register_commands(registry: CommandRegistry) -> None:
         return "\n".join(lines)
 
     async def plugins_command(args: str, context: Any) -> str:
-        from src.plugins.registry import PluginRegistry
+        from pathlib import Path as _Path
+        from src.plugins.manager import PluginManager
 
-        reg = PluginRegistry()
-        plugins = reg.list_plugins()
+        search_paths: list[_Path] = []
+        disabled: set[str] = set()
+        settings = getattr(context, "settings", None)
+        if settings and hasattr(settings, "plugins"):
+            search_paths = [_Path(p) for p in settings.plugins.search_paths]
+            disabled = set(settings.plugins.disabled)
+
+        mgr = PluginManager(search_paths=search_paths)
+        if disabled:
+            mgr.set_disabled_plugins(disabled)
+        mgr.discover()
+        mgr.load_all()
+
+        plugins = mgr.list_plugins()
 
         if not plugins:
             return "当前无已加载插件"
@@ -376,14 +419,14 @@ def register_commands(registry: CommandRegistry) -> None:
         if subcmd == "enable":
             if not subcmd_args:
                 return "用法: /plugins enable <插件名>"
-            if reg.enable(subcmd_args):
+            if mgr.enable_plugin(subcmd_args):
                 return f"✅ 已启用插件: {subcmd_args}"
             return f"启用失败: 未找到插件 '{subcmd_args}' 或插件处于错误状态"
 
         if subcmd == "disable":
             if not subcmd_args:
                 return "用法: /plugins disable <插件名>"
-            if reg.disable(subcmd_args):
+            if mgr.disable_plugin(subcmd_args):
                 return f"✅ 已禁用插件: {subcmd_args}"
             return f"禁用失败: 未找到插件 '{subcmd_args}'"
 
@@ -399,9 +442,17 @@ def register_commands(registry: CommandRegistry) -> None:
 
     async def hooks_command(args: str, context: Any) -> str:
         from src.hooks.registry import HookRegistry
+        from src.hooks.config import load_hooks_into_registry
         from src.hooks.types import HookEvent
 
+        settings_dict = None
+        settings = getattr(context, "settings", None)
+        if settings and hasattr(settings, "hooks"):
+            hooks_cfg = settings.hooks
+            settings_dict = {"hooks": hooks_cfg.hooks}
+
         reg = HookRegistry()
+        load_hooks_into_registry(reg, settings=settings_dict)
         hooks = reg.list_all()
 
         if not hooks:
@@ -440,7 +491,10 @@ def register_commands(registry: CommandRegistry) -> None:
         from src.services.memory import MemoryDiscovery
 
         cwd = getattr(context, "cwd", Path.cwd())
-        discovery = MemoryDiscovery(cwd=Path(cwd))
+        settings = getattr(context, "settings", None)
+        memdir = settings.memory.memdir if settings and hasattr(settings, "memory") else ""
+        search_nested = settings.memory.search_nested if settings and hasattr(settings, "memory") else True
+        discovery = MemoryDiscovery(cwd=Path(cwd), memdir=memdir, search_nested=search_nested)
 
         memories = discovery.discover_all()
 
@@ -462,9 +516,12 @@ def register_commands(registry: CommandRegistry) -> None:
 
     async def sessions_command(args: str, context: Any) -> str:
         from src.services.session_restore import SessionRestore
+        from src.services.session_storage import SessionStorage
 
-        cwd = getattr(context, "cwd", None)
-        restorer = SessionRestore(home=cwd if cwd else None)
+        settings = getattr(context, "settings", None)
+        sp = settings.session.storage_path if settings and hasattr(settings, "session") else ""
+        storage = SessionStorage(storage_path=sp)
+        restorer = SessionRestore(storage=storage)
 
         parts = args.strip().split(maxsplit=1)
         subcmd = parts[0] if parts else ""
@@ -473,8 +530,6 @@ def register_commands(registry: CommandRegistry) -> None:
         if subcmd == "delete":
             if not subcmd_args:
                 return "用法: /sessions delete <session_id>"
-            from src.services.session_storage import SessionStorage
-            storage = SessionStorage(home=cwd if cwd else None)
             if storage.delete(subcmd_args):
                 return f"✅ 已删除会话: {subcmd_args}"
             return f"未找到会话: {subcmd_args}"
@@ -505,8 +560,9 @@ def register_commands(registry: CommandRegistry) -> None:
         fmt = parts[0] if parts else "json"
         output_path = parts[1] if len(parts) > 1 else ""
 
-        cwd = getattr(context, "cwd", None)
-        storage = SessionStorage(home=cwd if cwd else None)
+        settings = getattr(context, "settings", None)
+        sp = settings.session.storage_path if settings and hasattr(settings, "session") else ""
+        storage = SessionStorage(storage_path=sp)
 
         session_id = getattr(context, "session_id", "")
         if not session_id:
@@ -575,7 +631,9 @@ def register_commands(registry: CommandRegistry) -> None:
         session_data = SessionData.from_dict(data)
 
         cwd = getattr(context, "cwd", None)
-        storage = SessionStorage(home=cwd if cwd else None)
+        settings = getattr(context, "settings", None)
+        sp = settings.session.storage_path if settings and hasattr(settings, "session") else ""
+        storage = SessionStorage(storage_path=sp)
         storage.save(session_data)
 
         title = session_data.title or "无标题"

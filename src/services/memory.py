@@ -8,26 +8,29 @@ CLAWSCODE_DIR_NAME = ".clawscode"
 
 
 class MemoryDiscovery:
-    def __init__(self, cwd: Path, home: Path | None = None):
+    def __init__(self, cwd: Path, home: Path | None = None, memdir: str = "", search_nested: bool = True):
         self._cwd = cwd.resolve()
         self._home = home or Path.home()
+        self._memdir_name = memdir or MEMORY_DIR_NAME
+        self._search_nested = search_nested
 
     def discover_all(self) -> list[tuple[Path, str]]:
         results: list[tuple[Path, str]] = []
 
-        home_memory = self._home / CLAWSCODE_DIR_NAME / MEMORY_DIR_NAME / MEMORY_FILENAME
+        home_memory = self._home / CLAWSCODE_DIR_NAME / self._memdir_name / MEMORY_FILENAME
         if home_memory.exists() and home_memory.is_file():
             results.append((home_memory, "home"))
 
-        project_memory = self._cwd / CLAWSCODE_DIR_NAME / MEMORY_DIR_NAME / MEMORY_FILENAME
+        project_memory = self._cwd / CLAWSCODE_DIR_NAME / self._memdir_name / MEMORY_FILENAME
         if project_memory.exists() and project_memory.is_file():
             results.append((project_memory, "project"))
 
-        local_memory = self._cwd / MEMORY_DIR_NAME / MEMORY_FILENAME
+        local_memory = self._cwd / self._memdir_name / MEMORY_FILENAME
         if local_memory.exists() and local_memory.is_file():
             results.append((local_memory, "local"))
 
-        results.extend(self._discover_nested(self._cwd))
+        if self._search_nested:
+            results.extend(self._discover_nested(self._cwd))
 
         return results
 

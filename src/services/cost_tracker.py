@@ -55,12 +55,13 @@ class CostSummary:
 
 
 class CostTrackerService:
-    def __init__(self, model: str = "default", home: Path | None = None):
+    def __init__(self, model: str = "default", home: Path | None = None, custom_pricing: dict[str, dict[str, float]] | None = None):
         self._model = model
         self._home = home or Path.home()
         self._cost_file = self._home / CLAWSCODE_DIR_NAME / COST_FILE_NAME
         self._entries: list[CostEntry] = []
         self._session_summary = CostSummary()
+        self._pricing = {**MODEL_PRICING, **(custom_pricing or {})}
 
     @property
     def session_summary(self) -> CostSummary:
@@ -74,7 +75,7 @@ class CostTrackerService:
         duration_ms: float = 0.0,
     ) -> CostEntry:
         model = model or self._model
-        pricing = MODEL_PRICING.get(model, MODEL_PRICING["default"])
+        pricing = self._pricing.get(model, self._pricing["default"])
         cost = (input_tokens / 1000.0 * pricing["input"]) + (output_tokens / 1000.0 * pricing["output"])
 
         entry = CostEntry(

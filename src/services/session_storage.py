@@ -52,9 +52,12 @@ class SessionData:
 
 
 class SessionStorage:
-    def __init__(self, home: Path | None = None):
-        self._home = home or Path.home()
-        self._sessions_dir = self._home / CLAWSCODE_DIR_NAME / SESSIONS_DIR_NAME
+    def __init__(self, home: Path | None = None, storage_path: str = ""):
+        if storage_path:
+            self._sessions_dir = Path(storage_path)
+        else:
+            self._home = home or Path.home()
+            self._sessions_dir = self._home / CLAWSCODE_DIR_NAME / SESSIONS_DIR_NAME
         self._sessions_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, session: SessionData) -> Path:
