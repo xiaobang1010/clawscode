@@ -8,7 +8,7 @@ from src import __version__
 
 app = typer.Typer(
     name="clawscode",
-    help="AI 编程助手 CLI - Claude Code 的 Python 复刻版",
+    help="AI 编程助手 CLI ",
     add_completion=False,
     no_args_is_help=False,
 )
