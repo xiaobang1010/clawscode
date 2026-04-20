@@ -20,17 +20,22 @@ def main(
     model: str = typer.Option(None, "--model", "-m", help="模型名称"),
     version: bool = typer.Option(False, "--version", "-v", help="显示版本号"),
     print_mode: bool = typer.Option(False, "--print", help="非交互模式，输出结果后退出"),
+    resume: str = typer.Option(None, "--resume", "-r", help="恢复历史会话（会话 ID 或 'latest'）"),
 ) -> None:
     if version:
         print(f"clawscode {__version__}")
         raise typer.Exit()
 
-    asyncio.run(_run(prompt, model, print_mode))
+    asyncio.run(_run(prompt, model, print_mode, resume))
 
 
-async def _run(prompt: str | None, model: str | None, print_mode: bool) -> None:
+async def _run(prompt: str | None, model: str | None, print_mode: bool, resume: str | None) -> None:
     from src.state import AppState
     from src.config import load_config
+    from src.services.session_restore import SessionRestore
+    from src.services.session_storage import SessionStorage
+    from src.services.session_title import generate_title
+    from src.repl import console
 
     settings, mcp_servers = load_config()
     if model:
@@ -39,8 +44,37 @@ async def _run(prompt: str | None, model: str | None, print_mode: bool) -> None:
     state = AppState(settings=settings)
     state.mcp_servers = mcp_servers
 
+    from src.services.cost_tracker import CostTrackerService
+    state.cost_tracker_service = CostTrackerService(
+        model=settings.model,
+        custom_pricing=settings.cost.pricing or None,
+    )
+
+    if resume is not None:
+        storage_path = settings.session.storage_path if hasattr(settings, "session") else ""
+        restorer = SessionRestore(storage=SessionStorage(storage_path=storage_path))
+        session_id = None if resume == "latest" else resume
+        if session_id is None:
+            restored = restorer.restore_latest()
+        else:
+            restored = restorer.restore(session_id)
+
+        if restored is not None:
+            state.messages = restored.messages
+            state.session_id = restored.session_data.session_id
+            state.session_title = restored.session_data.title
+            console.print(f"已恢复会话: {state.session_title or state.session_id[:8]}", style="bold green")
+            console.print(f"  消息数: {len(state.messages)}", style="dim")
+        else:
+            if session_id:
+                console.print(f"未找到会话: {session_id}", style="bold red")
+            else:
+                console.print("没有可恢复的历史会话", style="bold yellow")
+
     if prompt is not None:
         state.messages.append({"role": "user", "content": prompt})
+        if not state.session_title:
+            state.session_title = generate_title(prompt)
 
     if print_mode:
         if prompt is None:
@@ -59,7 +93,9 @@ async def _run_repl(state: AppState, initial_prompt: str | None = None) -> None:
     from src.commands import CommandRegistry, register_commands
     from src.repl import console
 
-    session = PromptSession(history=FileHistory(str(state.cwd / ".clawscode" / "history")))
+    history_dir = state.cwd / ".clawscode"
+    history_dir.mkdir(exist_ok=True)
+    session = PromptSession(history=FileHistory(str(history_dir / "history")))
     registry = CommandRegistry()
     register_commands(registry)
 
@@ -92,6 +128,25 @@ async def _run_repl(state: AppState, initial_prompt: str | None = None) -> None:
 
             await _run_query(state, user_input)
     finally:
+        try:
+            from src.hooks.types import HookContext, HookEvent
+            from src.hooks.executor import HookExecutor
+            from src.hooks.config import load_hooks_into_registry
+            from src.hooks.registry import HookRegistry
+            settings_dict = None
+            if hasattr(state, 'settings') and hasattr(state.settings, 'hooks'):
+                hooks_cfg = state.settings.hooks
+                if hooks_cfg.enabled:
+                    settings_dict = {"hooks": hooks_cfg.hooks}
+            if settings_dict is not None:
+                reg = HookRegistry()
+                count = load_hooks_into_registry(reg, settings=settings_dict)
+                if count > 0:
+                    executor = HookExecutor(reg)
+                    ctx = HookContext(event=HookEvent.SESSION_END, session_id=state.session_id)
+                    await executor.execute(ctx)
+        except Exception:
+            pass
         if mcp_client is not None:
             await mcp_client.disconnect_all()
 
@@ -132,7 +187,7 @@ async def _init_mcp(state: AppState) -> Any:
 
 
 async def _run_query(state: AppState, user_input: str) -> None:
-    from src.context import build_system_prompt
+    from src.context import build_context
     from src.query import handle_query
     from src.repl import render_stream
     from src.compact import compact_if_needed
@@ -147,8 +202,9 @@ async def _run_query(state: AppState, user_input: str) -> None:
 
     extra_tools = getattr(state, "_extra_tools", None)
     permission_checker = PermissionChecker(state.settings)
+    state.permission_checker = permission_checker
 
-    system = build_system_prompt(state.cwd, tools)
+    system = build_context(state.cwd, tools, memory_config=state.settings.memory)
     stream = await handle_query(
         user_input, state, system,
         permission_checker=permission_checker,
