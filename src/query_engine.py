@@ -67,8 +67,9 @@ async def create_query_loop(
         await hook_executor.execute(hook_ctx)
 
     while True:
-        tool_schemas = [t.get_openai_tool_schema() for t in tools]
-        tool_map = {t.name: t for t in tools}
+        active_tools = [t for t in tools if not getattr(t, "is_lazy", False)]
+        tool_schemas = [t.get_openai_tool_schema() for t in active_tools]
+        tool_map = {t.name: t for t in active_tools}
 
         has_tool_calls = False
         current_tool_calls: dict[int, dict] = {}
@@ -149,7 +150,12 @@ async def create_query_loop(
             )
 
         async def _execute_tool(tc: dict) -> tuple[dict, ToolResult]:
-            tool = tool_map[tc["name"]]
+            tool = tool_map.get(tc["name"])
+            if tool is None:
+                return tc, ToolResult(
+                    output=f"工具 '{tc['name']}' 当前不可用（已延迟加载）",
+                    is_error=True,
+                )
 
             if tool.name in ("FileEdit", "FileWrite"):
                 cwd = getattr(context, "cwd", None)
@@ -225,8 +231,8 @@ async def create_query_loop(
             )
 
         for tc, result in results:
-            tool = tool_map[tc["name"]]
-            if tool.name in ("FileEdit", "FileWrite") and not result.is_error:
+            tool = tool_map.get(tc["name"])
+            if tool is not None and tool.name in ("FileEdit", "FileWrite") and not result.is_error:
                 yield StreamEvent(type="checkpoint", data={"index": context.checkpoint_count})
 
         if hook_executor is not None:

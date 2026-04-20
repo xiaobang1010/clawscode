@@ -59,17 +59,46 @@ async def create_stream(
         raise last_exc
 
     start_time = time.monotonic()
+    has_text_delta = False
+    has_usage = False
+    _EXCLUDED_DELTA_ATTRS = frozenset({
+        "role", "content", "reasoning_content",
+        "tool_calls", "function_call",
+    })
 
     async for chunk in response:
         if not chunk.choices:
+            if hasattr(chunk, "usage") and chunk.usage:
+                u = chunk.usage
+                if getattr(u, "prompt_tokens", 0) > 0 or getattr(u, "completion_tokens", 0) > 0:
+                    has_usage = True
+                    yield StreamEvent(type="usage", data={
+                        "input_tokens": getattr(u, "prompt_tokens", 0),
+                        "output_tokens": getattr(u, "completion_tokens", 0),
+                        "duration_ms": (time.monotonic() - start_time) * 1000,
+                        "model": model,
+                    })
             continue
+
         delta = chunk.choices[0].delta
 
         if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            has_text_delta = True
             yield StreamEvent(type="reasoning_delta", data={"text": delta.reasoning_content})
 
         if delta.content:
+            has_text_delta = True
             yield StreamEvent(type="text_delta", data={"text": delta.content})
+
+        if not (hasattr(delta, "reasoning_content") and delta.reasoning_content) and not delta.content:
+            for attr_name in vars(delta):
+                if attr_name.startswith("_") or attr_name in _EXCLUDED_DELTA_ATTRS:
+                    continue
+                value = getattr(delta, attr_name, None)
+                if isinstance(value, str) and value:
+                    has_text_delta = True
+                    yield StreamEvent(type="text_delta", data={"text": value})
+                    break
 
         if delta.tool_calls:
             for tc in delta.tool_calls:
@@ -91,10 +120,8 @@ async def create_stream(
         if finish_reason is not None:
             yield StreamEvent(type="finish_reason", data={"reason": finish_reason})
 
-        if hasattr(chunk, "usage") and chunk.usage:
-            yield StreamEvent(type="usage", data={
-                "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
-                "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
-                "duration_ms": (time.monotonic() - start_time) * 1000,
-                "model": model,
-            })
+    if has_usage and not has_text_delta:
+        yield StreamEvent(type="debug", data={
+            "message": "stream contained usage but no text_delta or reasoning_delta was emitted",
+            "model": model,
+        })

@@ -31,9 +31,7 @@ DEFAULT_SYSTEM_TEMPLATE = """你是一个强大的 AI 编程助手，运行在 C
 - 使用工具完成任务，不要虚构信息
 
 {environment_info}
-
 {tools_section}
-
 {custom_instructions}"""
 
 AGENT_SYSTEM_TEMPLATE = """{base_prompt}
@@ -127,6 +125,9 @@ class PromptBuilder:
         custom = self._layers.get(PromptPriority.CUSTOM, self._custom_instructions)
         skills = self._skills_section
 
+        if tools_section:
+            tools_section = f"\n{tools_section}\n"
+
         return DEFAULT_SYSTEM_TEMPLATE.format(
             environment_info=environment_info,
             tools_section=tools_section,
@@ -134,17 +135,7 @@ class PromptBuilder:
         ) + (f"\n\n{skills}" if skills else "")
 
     def _build_tools_section(self) -> str:
-        if not self._tools:
-            return ""
-
-        lines = ["## 可用工具", ""]
-        for tool in self._tools:
-            name = getattr(tool, "user_facing_name", None) or tool.name
-            desc = tool.description.split("\n")[0] if tool.description else ""
-            readonly = " (只读)" if getattr(tool, "is_readonly", False) else ""
-            lines.append(f"- **{name}**{readonly}: {desc}")
-
-        return "\n".join(lines)
+        return ""
 
     def _build_agent(self, base_prompt: str) -> str:
         if not self._agent_config:
