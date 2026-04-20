@@ -80,7 +80,7 @@ async def create_query_loop(
                 pre_ctx = _create_hook_context(HookEvent.PRE_COMPACT, context)
                 await hook_executor.execute(pre_ctx)
 
-            messages = await compact_if_needed(messages, max_ctx)
+            messages = await compact_if_needed(messages, max_ctx, create_stream_fn=create_stream)
 
             if hook_executor is not None:
                 post_ctx = _create_hook_context(HookEvent.POST_COMPACT, context)
@@ -114,10 +114,12 @@ async def create_query_loop(
                 current_tool_calls[idx]["arguments"] += event.data.get("arguments") or ""
 
             if event.type == "usage":
-                if hasattr(context, "cost_tracker"):
-                    context.cost_tracker.add(
+                svc = getattr(context, "cost_tracker_service", None)
+                if svc is not None:
+                    svc.record(
                         input_tokens=event.data.get("input_tokens", 0),
                         output_tokens=event.data.get("output_tokens", 0),
+                        model=event.data.get("model"),
                         duration_ms=event.data.get("duration_ms", 0),
                     )
 
@@ -231,7 +233,7 @@ async def create_query_loop(
             pre_compact_ctx = _create_hook_context(HookEvent.PRE_COMPACT, context)
             await hook_executor.execute(pre_compact_ctx)
 
-        messages = await compact_if_needed(messages, context.settings.max_tokens)
+        messages = await compact_if_needed(messages, context.settings.max_tokens, create_stream_fn=create_stream)
 
         if hook_executor is not None:
             post_compact_ctx = _create_hook_context(HookEvent.POST_COMPACT, context)

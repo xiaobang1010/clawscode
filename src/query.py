@@ -5,6 +5,7 @@ from typing import Any
 from src.hooks.executor import HookExecutor
 from src.hooks.config import load_hooks_into_registry
 from src.hooks.registry import HookRegistry
+from src.hooks.types import HookContext, HookEvent
 from src.permissions import PermissionChecker
 from src.state import AppState
 from src.tool import Tool
@@ -44,8 +45,14 @@ async def handle_query(
         tools = tools + extra_tools
 
     user_messages = [{"role": "user", "content": user_input}]
-
     executor = hook_executor or _build_hook_executor(state)
+    if executor is not None:
+        prompt_ctx = HookContext(
+            event=HookEvent.USER_PROMPT_SUBMIT,
+            metadata={"prompt": user_input},
+            session_id=state.session_id,
+        )
+        await executor.execute(prompt_ctx)
 
     return create_query_loop(
         user_messages=user_messages,

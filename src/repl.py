@@ -22,7 +22,7 @@ def _truncate_args(args_str: str) -> str:
 
 
 async def render_stream(
-    events: AsyncGenerator[StreamEvent, None], cost_tracker=None
+    events: AsyncGenerator[StreamEvent, None], cost_tracker_service=None
 ) -> str:
     reasoning_text = ""
     answer_text = ""
@@ -89,10 +89,10 @@ async def render_stream(
             border_style="dim",
         )
     )
-    if cost_tracker is not None:
+    if cost_tracker_service is not None:
         console.print(
             Panel(
-                cost_tracker.session_summary.format(),
+                cost_tracker_service.format_session_summary(),
                 title="累计会话费用",
                 border_style="green",
             )

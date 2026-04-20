@@ -19,5 +19,13 @@ from src.services.compact_engine import (
 )
 
 
-async def compact_if_needed(messages: list[dict], max_tokens: int) -> list[dict]:
+async def compact_if_needed(
+    messages: list[dict],
+    max_tokens: int,
+    create_stream_fn: Any = None,
+) -> list[dict]:
+    if create_stream_fn is not None:
+        return await compact_with_llm(
+            messages, max_tokens, create_stream_fn=create_stream_fn
+        )
     return _compact_if_needed(messages, max_tokens)

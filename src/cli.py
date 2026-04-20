@@ -44,6 +44,12 @@ async def _run(prompt: str | None, model: str | None, print_mode: bool, resume: 
     state = AppState(settings=settings)
     state.mcp_servers = mcp_servers
 
+    from src.services.cost_tracker import CostTrackerService
+    state.cost_tracker_service = CostTrackerService(
+        model=settings.model,
+        custom_pricing=settings.cost.pricing or None,
+    )
+
     if resume is not None:
         storage_path = settings.session.storage_path if hasattr(settings, "session") else ""
         restorer = SessionRestore(storage=SessionStorage(storage_path=storage_path))
@@ -122,6 +128,25 @@ async def _run_repl(state: AppState, initial_prompt: str | None = None) -> None:
 
             await _run_query(state, user_input)
     finally:
+        try:
+            from src.hooks.types import HookContext, HookEvent
+            from src.hooks.executor import HookExecutor
+            from src.hooks.config import load_hooks_into_registry
+            from src.hooks.registry import HookRegistry
+            settings_dict = None
+            if hasattr(state, 'settings') and hasattr(state.settings, 'hooks'):
+                hooks_cfg = state.settings.hooks
+                if hooks_cfg.enabled:
+                    settings_dict = {"hooks": hooks_cfg.hooks}
+            if settings_dict is not None:
+                reg = HookRegistry()
+                count = load_hooks_into_registry(reg, settings=settings_dict)
+                if count > 0:
+                    executor = HookExecutor(reg)
+                    ctx = HookContext(event=HookEvent.SESSION_END, session_id=state.session_id)
+                    await executor.execute(ctx)
+        except Exception:
+            pass
         if mcp_client is not None:
             await mcp_client.disconnect_all()
 

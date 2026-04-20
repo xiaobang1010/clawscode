@@ -186,20 +186,16 @@ def register_commands(registry: CommandRegistry) -> None:
         return f"✅ 已恢复会话: {title} ({msg_count} 条消息)"
 
     async def cost_command(args: str, context: Any) -> str:
-        from src.services.cost_tracker import CostTrackerService
+        svc = getattr(context, "cost_tracker_service", None)
 
-        settings = getattr(context, "settings", None)
-        model = settings.model if settings else "default"
-        custom_pricing = None
-        if settings and hasattr(settings, "cost"):
-            custom_pricing = settings.cost.pricing or None
-        tracker = CostTrackerService(model=model, custom_pricing=custom_pricing)
+        if svc is None:
+            return "📊 Cost 追踪服务未初始化"
 
         if args.strip() == "history":
-            summary = tracker.get_historical_summary()
+            summary = svc.get_historical_summary()
             return f"📊 历史费用统计：\n{summary.format()}"
 
-        return f"📊 当前会话费用：\n{tracker.format_session_summary()}"
+        return f"📊 当前会话费用：\n{svc.format_session_summary()}"
 
     async def permissions_command(args: str, context: Any) -> str:
         from src.services.permission_persistence import PermissionPersistence

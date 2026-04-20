@@ -159,6 +159,32 @@ class AgentTool(Tool):
     input_schema = AgentToolInput
     is_readonly = False
 
+    @staticmethod
+    async def _fire_subagent_hook(context: Any, event: Any, agent_name: str, agent_id: int) -> None:
+        try:
+            from src.hooks.types import HookContext, HookEvent
+            from src.hooks.executor import HookExecutor
+            from src.hooks.config import load_hooks_into_registry
+            from src.hooks.registry import HookRegistry
+            settings_dict = None
+            if context and hasattr(context, 'settings') and hasattr(context.settings, 'hooks'):
+                hooks_cfg = context.settings.hooks
+                if hooks_cfg.enabled:
+                    settings_dict = {"hooks": hooks_cfg.hooks}
+            if settings_dict is not None:
+                reg = HookRegistry()
+                count = load_hooks_into_registry(reg, settings=settings_dict)
+                if count > 0:
+                    executor = HookExecutor(reg)
+                    ctx = HookContext(
+                        event=event,
+                        metadata={"agent_name": agent_name, "agent_id": agent_id},
+                        session_id=getattr(context, "session_id", ""),
+                    )
+                    await executor.execute(ctx)
+        except Exception:
+            pass
+
     async def call(self, input: AgentToolInput, context: Any) -> ToolResult:
         definition = _find_agent_definition(input.subagent_type)
         if not definition:
@@ -213,6 +239,7 @@ class AgentTool(Tool):
 
             async def _bg_run() -> None:
                 try:
+                    await self._fire_subagent_hook(context, HookEvent.SUBAGENT_START, definition.name, agent_id)
                     _display_manager.activate(agent_id)
                     result_text = await _run_agent_loop(
                         agent_messages, agent_tools, system_prompt,
@@ -222,6 +249,7 @@ class AgentTool(Tool):
                 except Exception as e:
                     bg_task.fail(str(e))
                 finally:
+                    await self._fire_subagent_hook(context, HookEvent.SUBAGENT_STOP, definition.name, agent_id)
                     _display_manager.deactivate(agent_id)
 
             import asyncio as _aio
@@ -232,6 +260,7 @@ class AgentTool(Tool):
                 output=f"后台 Agent 已启动 (ID: {task_id}, 类型: {definition.name})"
             )
 
+        await self._fire_subagent_hook(context, HookEvent.SUBAGENT_START, definition.name, agent_id)
         _display_manager.activate(agent_id)
         try:
             result_text = await _run_agent_loop(
@@ -242,6 +271,7 @@ class AgentTool(Tool):
         except Exception as e:
             return ToolResult(output=f"Agent 执行错误: {e}", is_error=True)
         finally:
+            await self._fire_subagent_hook(context, HookEvent.SUBAGENT_STOP, definition.name, agent_id)
             _display_manager.deactivate(agent_id)
 
 

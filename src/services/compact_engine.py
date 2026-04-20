@@ -189,7 +189,7 @@ async def compact_with_llm(
             [],
             "请根据对话内容生成压缩摘要。不要调用任何工具。",
         ):
-            if event.type == "content":
+            if event.type == "text_delta":
                 summary_text += event.data.get("text", "")
 
         if not summary_text.strip():
