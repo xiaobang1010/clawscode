@@ -64,7 +64,7 @@ async def render_stream(
                 total_input_tokens += event.data.get("input_tokens", 0)
                 total_output_tokens += event.data.get("output_tokens", 0)
                 duration = event.data.get("duration_ms", 0)
-                if duration > 0:
+                if duration > 0 and (total_input_tokens > 0 or total_output_tokens > 0):
                     console.print(
                         f"📊 Tokens: {total_input_tokens}+{total_output_tokens} | Time: {duration:.0f}ms",
                         style="dim",
@@ -79,8 +79,21 @@ async def render_stream(
             elif event.type == "finish_reason":
                 pass
 
-    if answer_text:
-        console.print(Markdown(answer_text))
+            elif event.type == "debug":
+                console.print(
+                    f"🐛 [debug] {event.data.get('message', '')}",
+                    style="dim",
+                )
+
+    display_text = answer_text or reasoning_text
+    if display_text:
+        console.print(Markdown(display_text))
+
+    if not display_text and total_output_tokens > 0:
+        console.print(
+            f"⚠️ 模型生成了 {total_output_tokens} Token 但内容未被捕获，可能存在模型兼容性问题",
+            style="bold yellow",
+        )
 
     console.print(
         Panel(

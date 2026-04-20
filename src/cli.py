@@ -117,7 +117,7 @@ async def _run_repl(state: AppState, initial_prompt: str | None = None) -> None:
             except EOFError:
                 break
 
-            if not user_input.strip():
+            if not user_input or not user_input.strip():
                 continue
 
             if registry.is_command(user_input):

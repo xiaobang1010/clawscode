@@ -130,11 +130,12 @@ class ContextProvider:
 
     def _get_git_context(self) -> GitContext:
         ctx = GitContext()
+        kwargs = dict(capture_output=True, encoding="utf-8", errors="replace", timeout=5)
 
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--is-inside-work-tree"],
-                cwd=self._cwd, capture_output=True, text=True, timeout=5,
+                cwd=self._cwd, **kwargs,
             )
             if result.returncode != 0:
                 return ctx
@@ -142,46 +143,46 @@ class ContextProvider:
 
             branch_result = subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=self._cwd, capture_output=True, text=True, timeout=5,
+                cwd=self._cwd, **kwargs,
             )
-            if branch_result.returncode == 0:
+            if branch_result.returncode == 0 and branch_result.stdout:
                 ctx.branch = branch_result.stdout.strip()
 
             log_result = subprocess.run(
                 ["git", "log", "--oneline", "-5"],
-                cwd=self._cwd, capture_output=True, text=True, timeout=5,
+                cwd=self._cwd, **kwargs,
             )
-            if log_result.returncode == 0:
+            if log_result.returncode == 0 and log_result.stdout:
                 ctx.recent_commits = [
                     line.strip() for line in log_result.stdout.strip().split("\n") if line.strip()
                 ]
 
             user_result = subprocess.run(
                 ["git", "config", "user.name"],
-                cwd=self._cwd, capture_output=True, text=True, timeout=5,
+                cwd=self._cwd, **kwargs,
             )
-            if user_result.returncode == 0:
+            if user_result.returncode == 0 and user_result.stdout:
                 ctx.user_name = user_result.stdout.strip()
 
             email_result = subprocess.run(
                 ["git", "config", "user.email"],
-                cwd=self._cwd, capture_output=True, text=True, timeout=5,
+                cwd=self._cwd, **kwargs,
             )
-            if email_result.returncode == 0:
+            if email_result.returncode == 0 and email_result.stdout:
                 ctx.user_email = email_result.stdout.strip()
 
             remote_result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
-                cwd=self._cwd, capture_output=True, text=True, timeout=5,
+                cwd=self._cwd, **kwargs,
             )
-            if remote_result.returncode == 0:
+            if remote_result.returncode == 0 and remote_result.stdout:
                 ctx.remote_url = remote_result.stdout.strip()
 
             status_result = subprocess.run(
                 ["git", "status", "--short"],
-                cwd=self._cwd, capture_output=True, text=True, timeout=5,
+                cwd=self._cwd, **kwargs,
             )
-            if status_result.returncode == 0 and status_result.stdout.strip():
+            if status_result.returncode == 0 and status_result.stdout and status_result.stdout.strip():
                 ctx.has_changes = True
                 ctx.changed_files = [
                     line.strip() for line in status_result.stdout.strip().split("\n") if line.strip()
