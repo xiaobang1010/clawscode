@@ -8,7 +8,7 @@ def create_batch_skill() -> SkillDefinition:
         name="batch",
         description="批处理 Skill：对多个文件或目标执行相同的操作序列",
         when_to_use="当需要对多个文件执行相同的编辑、搜索或转换操作时",
-        allowed_tools=[],
+        allowed_tools=["FileRead", "FileEdit", "FileWrite", "Glob", "Grep", "Bash"],
         get_prompt_for_command="""你是一个批处理执行器。你的任务是对一组目标执行相同的操作。
 
 ### 工作方式

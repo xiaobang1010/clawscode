@@ -8,7 +8,7 @@ def create_verify_skill() -> SkillDefinition:
         name="verify",
         description="验证 Skill：验证代码变更的正确性和完整性",
         when_to_use="当需要验证代码修改是否正确、测试是否通过、功能是否正常时",
-        allowed_tools=[],
+        allowed_tools=["FileRead", "Glob", "Grep", "Bash"],
         get_prompt_for_command="""你是一个代码验证助手。你的任务是全面验证代码变更的正确性。
 
 ### 验证流程

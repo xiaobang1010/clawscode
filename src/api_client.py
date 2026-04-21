@@ -25,10 +25,15 @@ async def create_stream(
     model: str = "ZhipuAI/GLM-5",
     api_key: str | None = None,
     base_url: str = "https://api-inference.modelscope.cn/v1",
+    cache_system_prompt: bool = True,
+    cache_messages: bool = False,
 ) -> AsyncGenerator[StreamEvent, None]:
     client = create_client(api_key or "", base_url)
 
-    openai_messages = [{"role": "system", "content": system}] + messages
+    system_msg: dict = {"role": "system", "content": system}
+    if cache_system_prompt:
+        system_msg["cache_control"] = {"type": "ephemeral"}
+    openai_messages = [system_msg] + messages
 
     kwargs: dict = {
         "model": model,

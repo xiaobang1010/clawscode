@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from typing import Any
+
 from src.services.compact_engine import (
     compact_if_needed as _compact_if_needed,
     compact_with_llm,
+    reactive_compact,
     apply_compaction,
     build_compact_messages,
     build_partial_compact_messages,
     create_compact_boundary_message,
+    format_compact_summary,
     is_compact_boundary,
     AUTOCOMPACT_BUFFER_TOKENS,
     WARNING_THRESHOLD_TOKENS,

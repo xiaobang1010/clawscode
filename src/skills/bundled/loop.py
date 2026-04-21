@@ -8,7 +8,7 @@ def create_loop_skill() -> SkillDefinition:
         name="loop",
         description="循环 Skill：迭代执行任务直到满足条件",
         when_to_use="当需要反复执行某个操作直到达到目标或条件满足时",
-        allowed_tools=[],
+        allowed_tools=["FileRead", "FileEdit", "FileWrite", "Glob", "Grep", "Bash", "WebSearch"],
         get_prompt_for_command="""你是一个迭代任务执行器。你的任务是反复执行操作直到满足退出条件。
 
 ### 工作方式

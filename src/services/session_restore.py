@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,10 @@ class RestoredSession:
     session_data: SessionData
     messages: list[dict]
     metadata: dict[str, Any]
+    file_history: list[str] = field(default_factory=list)
+    todo_list: list[dict] = field(default_factory=list)
+    agent_type: str = ""
+    model_override: str = ""
 
 
 class SessionRestore:
@@ -25,11 +30,18 @@ class SessionRestore:
 
         messages = self._rebuild_messages(session)
         metadata = self._rebuild_metadata(session)
+        file_history = self._restore_file_history(session)
+        todo_list = self._restore_todo_list(session)
+        agent_type, model_override = self._restore_agent_config(session)
 
         return RestoredSession(
             session_data=session,
             messages=messages,
             metadata=metadata,
+            file_history=file_history,
+            todo_list=todo_list,
+            agent_type=agent_type,
+            model_override=model_override,
         )
 
     def restore_latest(self) -> RestoredSession | None:
@@ -45,8 +57,18 @@ class SessionRestore:
     def _rebuild_messages(self, session: SessionData) -> list[dict]:
         messages = []
         for msg in session.messages:
-            if isinstance(msg, dict) and "role" in msg:
-                messages.append(msg)
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            if role not in ("system", "user", "assistant", "tool"):
+                continue
+            if role == "system" and not msg.get("content"):
+                continue
+            if role == "tool" and not msg.get("tool_call_id"):
+                continue
+            if role in ("user", "assistant") and not msg.get("content") and not msg.get("tool_calls"):
+                continue
+            messages.append(msg)
         return messages
 
     def _rebuild_metadata(self, session: SessionData) -> dict[str, Any]:
@@ -58,3 +80,45 @@ class SessionRestore:
             "message_count": len(session.messages),
             **session.metadata,
         }
+
+    def _restore_file_history(self, session: SessionData) -> list[str]:
+        history = session.metadata.get("file_history", [])
+        if isinstance(history, list):
+            return [str(f) for f in history if isinstance(f, (str, Path))]
+        return []
+
+    def _restore_todo_list(self, session: SessionData) -> list[dict]:
+        todos = session.metadata.get("todo_list", [])
+        if isinstance(todos, list):
+            valid = []
+            for t in todos:
+                if isinstance(t, dict) and "content" in t:
+                    valid.append(t)
+            return valid
+        return []
+
+    def _restore_agent_config(self, session: SessionData) -> tuple[str, str]:
+        agent_type = session.metadata.get("agent_type", "")
+        model_override = session.metadata.get("model_override", "")
+        return str(agent_type), str(model_override)
+
+    def extract_last_todos_from_messages(self, session: SessionData) -> list[dict]:
+        for msg in reversed(session.messages):
+            if not isinstance(msg, dict):
+                continue
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                continue
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function", {})
+                if fn.get("name") == "TodoWrite":
+                    try:
+                        args = json.loads(fn.get("arguments", "{}"))
+                        todos = args.get("todos", [])
+                        if isinstance(todos, list) and todos:
+                            return todos
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+        return []

@@ -8,7 +8,7 @@ def create_debug_skill() -> SkillDefinition:
         name="debug",
         description="调试 Skill：系统化地分析和修复代码问题",
         when_to_use="当代码出现错误、异常或意外行为需要调试时",
-        allowed_tools=[],
+        allowed_tools=["FileRead", "FileEdit", "Glob", "Grep", "Bash", "WebSearch"],
         get_prompt_for_command="""你是一个专业的代码调试助手。你的任务是系统化地分析和修复代码问题。
 
 ### 调试流程

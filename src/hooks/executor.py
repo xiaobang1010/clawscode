@@ -49,9 +49,11 @@ class HookExecutor:
         combined_output = "\n".join(r.output for r in results if r.output)
         errors = [r.error for r in results if r.error]
         should_block = any(r.should_block for r in results)
+        prevent_continuation = any(r.prevent_continuation for r in results)
 
         return HookResult(
             output=combined_output,
             error="; ".join(errors) if errors else None,
             should_block=should_block,
+            prevent_continuation=prevent_continuation,
         )

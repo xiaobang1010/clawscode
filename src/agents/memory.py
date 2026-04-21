@@ -14,6 +14,13 @@ class MemoryScope(str, Enum):
     LOCAL = "local"
 
 
+class MemoryType(str, Enum):
+    USER = "user"
+    FEEDBACK = "feedback"
+    PROJECT = "project"
+    REFERENCE = "reference"
+
+
 @dataclass
 class MemoryEntry:
     key: str
@@ -28,6 +35,10 @@ class MemorySnapshot:
     agent_name: str
     entries: list[MemoryEntry]
     timestamp: float = field(default_factory=time.time)
+
+
+MEMORY_MAX_LINES = 200
+MEMORY_MAX_SIZE = 25 * 1024
 
 
 class AgentMemory:
@@ -108,6 +119,101 @@ class AgentMemory:
     def get_snapshots(self) -> list[MemorySnapshot]:
         return list(self._snapshots)
 
+    def _get_memory_dir(self, scope: MemoryScope) -> Path:
+        if scope == MemoryScope.USER:
+            return self._home / ".clawscode" / "memdir"
+        elif scope == MemoryScope.PROJECT:
+            return self._cwd / ".clawscode" / "memdir"
+        else:
+            return self._cwd / "memdir"
+
+    def _get_team_memory_dir(self, scope: MemoryScope = MemoryScope.PROJECT) -> Path:
+        base = self._get_memory_dir(scope)
+        return base / "team"
+
+    def ensure_memory_dir_exists(self) -> None:
+        for scope in MemoryScope:
+            d = self._get_memory_dir(scope)
+            d.mkdir(parents=True, exist_ok=True)
+
+    def write_memory_file(
+        self,
+        name: str,
+        content: str,
+        memory_type: str = "project",
+        description: str = "",
+        scope: MemoryScope = MemoryScope.PROJECT,
+    ) -> bool:
+        memory_dir = self._get_memory_dir(scope)
+        try:
+            memory_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        filename = f"{safe_name}.md"
+        filepath = memory_dir / filename
+
+        frontmatter_lines = [
+            "---",
+            f"name: {name}",
+            f"type: {memory_type}",
+            f"description: {description or name}",
+            f"agent: {self._agent_name}",
+            "---",
+            "",
+        ]
+
+        try:
+            filepath.write_text(
+                "\n".join(frontmatter_lines) + content, encoding="utf-8"
+            )
+            self.write(key=f"file:{name}", value=content[:500], scope=scope)
+            return True
+        except OSError:
+            return False
+
+    def read_memory_file(self, name: str, scope: MemoryScope = MemoryScope.PROJECT) -> str | None:
+        memory_dir = self._get_memory_dir(scope)
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        filepath = memory_dir / f"{safe_name}.md"
+        if not filepath.exists():
+            return None
+        try:
+            raw = filepath.read_text(encoding="utf-8")
+            if raw.startswith("---"):
+                end = raw.find("---", 3)
+                if end != -1:
+                    return raw[end + 3:].strip()
+            return raw.strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def list_memory_files(self, scope: MemoryScope | None = None) -> list[dict]:
+        scopes = [scope] if scope else list(MemoryScope)
+        results = []
+        for s in scopes:
+            memory_dir = self._get_memory_dir(s)
+            if not memory_dir.exists():
+                continue
+            for f in sorted(memory_dir.glob("*.md")):
+                try:
+                    raw = f.read_text(encoding="utf-8")
+                    meta = {"name": f.stem, "scope": s.value, "path": str(f)}
+                    if raw.startswith("---"):
+                        end = raw.find("---", 3)
+                        if end != -1:
+                            header = raw[3:end].strip()
+                            for line in header.split("\n"):
+                                if ":" in line:
+                                    k, v = line.split(":", 1)
+                                    meta[k.strip()] = v.strip()
+                    meta["size"] = len(raw)
+                    results.append(meta)
+                except (OSError, UnicodeDecodeError):
+                    continue
+        return results
+
     def load_from_memory_files(self) -> None:
         from src.services.memory import MemoryDiscovery
 
@@ -148,6 +254,11 @@ class AgentMemory:
 
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
+            lines = content.split("\n")
+            if len(lines) > MEMORY_MAX_LINES:
+                content = "\n".join(lines[:MEMORY_MAX_LINES])
+            if len(content.encode("utf-8")) > MEMORY_MAX_SIZE:
+                content = content.encode("utf-8")[:MEMORY_MAX_SIZE].decode("utf-8", errors="ignore")
             target_file = target_dir / "MEMORY.md"
             target_file.write_text(content, encoding="utf-8")
             return True
@@ -156,9 +267,127 @@ class AgentMemory:
 
     def format_for_prompt(self) -> str:
         all_entries = self.read_all()
-        if not all_entries:
-            return ""
-        lines = [f"## Agent 记忆 ({self._agent_name})"]
-        for key, value in all_entries.items():
-            lines.append(f"- **{key}**: {value[:200]}")
-        return "\n".join(lines)
+        file_entries = self.list_memory_files()
+
+        parts = []
+        if file_entries:
+            parts.append("## 持久化记忆文件")
+            for entry in file_entries:
+                desc = entry.get("description", entry["name"])
+                parts.append(f"- **{entry['name']}** ({entry['scope']}): {desc}")
+
+        if all_entries:
+            parts.append(f"\n## Agent 记忆 ({self._agent_name})")
+            for key, value in all_entries.items():
+                parts.append(f"- **{key}**: {value[:200]}")
+
+        return "\n".join(parts) if parts else ""
+
+    def write_team_memory_file(
+        self,
+        name: str,
+        content: str,
+        memory_type: str = "project",
+        description: str = "",
+        scope: MemoryScope = MemoryScope.PROJECT,
+    ) -> bool:
+        team_dir = self._get_team_memory_dir(scope)
+        try:
+            team_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        filepath = team_dir / f"{safe_name}.md"
+
+        frontmatter_lines = [
+            "---",
+            f"name: {name}",
+            f"type: {memory_type}",
+            f"description: {description or name}",
+            f"agent: {self._agent_name}",
+            f"scope: team",
+            "---",
+            "",
+        ]
+
+        try:
+            filepath.write_text(
+                "\n".join(frontmatter_lines) + content, encoding="utf-8"
+            )
+            return True
+        except OSError:
+            return False
+
+    def list_team_memory_files(self, scope: MemoryScope = MemoryScope.PROJECT) -> list[dict]:
+        team_dir = self._get_team_memory_dir(scope)
+        if not team_dir.exists():
+            return []
+
+        results = []
+        for f in sorted(team_dir.glob("*.md")):
+            try:
+                raw = f.read_text(encoding="utf-8")
+                meta = {"name": f.stem, "scope": "team", "path": str(f)}
+                if raw.startswith("---"):
+                    end = raw.find("---", 3)
+                    if end != -1:
+                        header = raw[3:end].strip()
+                        for line in header.split("\n"):
+                            if ":" in line:
+                                k, v = line.split(":", 1)
+                                meta[k.strip()] = v.strip()
+                meta["size"] = len(raw)
+                results.append(meta)
+            except (OSError, UnicodeDecodeError):
+                continue
+        return results
+
+    def save_team_memory(self, content: str, scope: MemoryScope = MemoryScope.PROJECT) -> bool:
+        team_dir = self._get_team_memory_dir(scope)
+        try:
+            team_dir.mkdir(parents=True, exist_ok=True)
+            lines = content.split("\n")
+            if len(lines) > MEMORY_MAX_LINES:
+                content = "\n".join(lines[:MEMORY_MAX_LINES])
+            if len(content.encode("utf-8")) > MEMORY_MAX_SIZE:
+                content = content.encode("utf-8")[:MEMORY_MAX_SIZE].decode("utf-8", errors="ignore")
+            target_file = team_dir / "MEMORY.md"
+            target_file.write_text(content, encoding="utf-8")
+            return True
+        except OSError:
+            return False
+
+
+def memory_age(file_path: Path) -> str:
+    import os
+    try:
+        mtime = os.path.getmtime(str(file_path))
+        age_seconds = time.time() - mtime
+        age_days = int(age_seconds / 86400)
+        if age_days == 0:
+            return "today"
+        elif age_days == 1:
+            return "yesterday"
+        elif age_days < 30:
+            return f"{age_days} days ago"
+        elif age_days < 365:
+            return f"{age_days // 30} months ago"
+        else:
+            return f"{age_days // 365} years ago"
+    except OSError:
+        return "unknown"
+
+
+def memory_freshness_text(file_path: Path) -> str:
+    age = memory_age(file_path)
+    if age in ("today", "yesterday", "unknown"):
+        return ""
+    return f"(This memory is {age})"
+
+
+def memory_freshness_note(file_path: Path) -> str:
+    text = memory_freshness_text(file_path)
+    if not text:
+        return ""
+    return f"<system-reminder>{text}</system-reminder>"

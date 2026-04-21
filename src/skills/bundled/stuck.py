@@ -8,7 +8,7 @@ def create_stuck_skill() -> SkillDefinition:
         name="stuck",
         description="卡住检测 Skill：检测和恢复陷入僵局的任务",
         when_to_use="当任务似乎陷入僵局、重复相同操作或无法取得进展时",
-        allowed_tools=[],
+        allowed_tools=["FileRead", "Glob", "Grep", "Bash"],
         get_prompt_for_command="""你是一个僵局检测和恢复助手。你的任务是识别任务陷入僵局的原因并帮助恢复。
 
 ### 检测信号

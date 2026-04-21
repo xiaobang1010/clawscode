@@ -8,7 +8,7 @@ def create_simplify_skill() -> SkillDefinition:
         name="simplify",
         description="简化 Skill：简化和重构复杂代码",
         when_to_use="当代码过于复杂、需要简化或重构以提高可读性和可维护性时",
-        allowed_tools=[],
+        allowed_tools=["FileRead", "FileEdit", "FileWrite", "Glob", "Grep", "Bash"],
         get_prompt_for_command="""你是一个代码简化和重构助手。你的任务是简化复杂代码，提高可读性和可维护性。
 
 ### 简化原则

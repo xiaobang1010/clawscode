@@ -8,7 +8,7 @@ def create_remember_skill() -> SkillDefinition:
         name="remember",
         description="记忆 Skill：保存和检索重要信息到项目记忆中",
         when_to_use="当需要记住项目约定、重要决策或常用模式时",
-        allowed_tools=[],
+        allowed_tools=["FileRead", "FileWrite", "Glob", "Grep"],
         get_prompt_for_command="""你是一个记忆管理助手。你的任务是帮助保存和检索项目中的重要信息。
 
 ### 记忆类型

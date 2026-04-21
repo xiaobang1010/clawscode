@@ -15,6 +15,8 @@ class HookEvent(str, Enum):
     SESSION_END = "SessionEnd"
     SUBAGENT_START = "SubagentStart"
     SUBAGENT_STOP = "SubagentStop"
+    TASK_COMPLETED = "TaskCompleted"
+    TEAMMATE_IDLE = "TeammateIdle"
     NOTIFICATION = "Notification"
     USER_PROMPT_SUBMIT = "UserPromptSubmit"
 
@@ -30,6 +32,7 @@ class HookResult:
     output: str = ""
     error: str | None = None
     should_block: bool = False
+    prevent_continuation: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

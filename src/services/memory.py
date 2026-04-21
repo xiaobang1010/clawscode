@@ -45,6 +45,16 @@ class MemoryDiscovery:
             pass
         return nested
 
+    def _classify_memory_type(self, content: str) -> str:
+        lower = content.lower()
+        if any(kw in lower for kw in ["用户偏好", "偏好", "习惯", "user preference"]):
+            return "user"
+        if any(kw in lower for kw in ["用户反馈", "反馈", "feedback", "不要", "避免"]):
+            return "feedback"
+        if any(kw in lower for kw in ["项目", "架构", "技术栈", "project", "architecture"]):
+            return "project"
+        return "reference"
+
     def load_merged(self) -> str:
         discovered = self.discover_all()
         if not discovered:
@@ -65,4 +75,14 @@ class MemoryDiscovery:
         merged = self.load_merged()
         if not merged:
             return ""
-        return f"\n## 记忆（MEMORY.md）\n\n{merged}"
+
+        memory_type = self._classify_memory_type(merged)
+        type_labels = {
+            "user": "用户偏好",
+            "feedback": "用户反馈",
+            "project": "项目上下文",
+            "reference": "参考信息",
+        }
+        type_label = type_labels.get(memory_type, "参考信息")
+
+        return f"\n## 记忆（MEMORY.md）[类型: {type_label}]\n\n{merged}"
