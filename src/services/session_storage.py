@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .message_uuid import generate_uuid, MessageChain
+
 
 SESSIONS_DIR_NAME = "sessions"
 CLAWSCODE_DIR_NAME = ".clawscode"
@@ -27,8 +29,27 @@ class SessionData:
         self.title = title
         self.created_at = created_at or datetime.now().isoformat()
         self.updated_at = updated_at or datetime.now().isoformat()
-        self.messages = messages or []
+        self._message_chain = MessageChain()
+        if messages:
+            self._message_chain.rebuild_chain(messages)
         self.metadata = metadata or {}
+
+    @property
+    def messages(self) -> list[dict]:
+        return self._message_chain.messages
+
+    @messages.setter
+    def messages(self, value: list[dict]) -> None:
+        self._message_chain.rebuild_chain(value)
+
+    def add_message(self, message: dict[str, Any]) -> str:
+        return self._message_chain.add_message(message)
+
+    def get_message_by_uuid(self, msg_uuid: str) -> dict[str, Any] | None:
+        return self._message_chain.get_message_by_uuid(msg_uuid)
+
+    def get_message_chain(self) -> MessageChain:
+        return self._message_chain
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,7 +63,7 @@ class SessionData:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SessionData:
-        return cls(
+        instance = cls(
             session_id=data.get("session_id"),
             title=data.get("title", ""),
             created_at=data.get("created_at"),
@@ -50,6 +71,7 @@ class SessionData:
             messages=data.get("messages", []),
             metadata=data.get("metadata", {}),
         )
+        return instance
 
 
 class SessionStorage:
@@ -73,7 +95,8 @@ class SessionStorage:
         return path
 
     def save_incremental(self, session: SessionData, new_messages: list[dict]) -> Path:
-        session.messages.extend(new_messages)
+        for msg in new_messages:
+            session.add_message(msg)
         return self.save(session)
 
     def load(self, session_id: str) -> SessionData | None:
