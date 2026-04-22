@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .file_state_cache import FileStateCache, FileState, clone_file_state_cache
+
 
 class AgentType(str, Enum):
     SUBAGENT = "subagent"
@@ -86,38 +88,6 @@ def create_isolated_agent_state(
         if share_abort:
             state["abort_event"] = parent_state.get("abort_event")
     return state
-
-
-@dataclass
-class FileStateCache:
-    _cache: dict[str, Any] = field(default_factory=dict)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._cache.get(key, default)
-
-    def set(self, key: str, value: Any) -> None:
-        self._cache[key] = value
-
-    def delete(self, key: str) -> None:
-        self._cache.pop(key, None)
-
-    def clear(self) -> None:
-        self._cache.clear()
-
-    def keys(self) -> list[str]:
-        return list(self._cache.keys())
-
-    def __contains__(self, key: str) -> bool:
-        return key in self._cache
-
-    def __len__(self) -> int:
-        return len(self._cache)
-
-
-def clone_file_state_cache(cache: FileStateCache | None) -> FileStateCache:
-    if cache is None:
-        return FileStateCache()
-    return FileStateCache(_cache=dict(cache._cache))
 
 
 @dataclass

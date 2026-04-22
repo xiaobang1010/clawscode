@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.services.token_counter import count_tokens
+from src.services.token_counter import count_tokens, has_thinking_blocks, count_thinking_tokens
 
 
 @dataclass
@@ -160,3 +160,112 @@ def format_context_report(data: ContextData) -> str:
     lines.append("")
     lines.append("=" * 50)
     return "\n".join(lines)
+
+
+@dataclass
+class TokenStats:
+    total_tokens: int = 0
+    user_tokens: int = 0
+    assistant_tokens: int = 0
+    tool_call_tokens: int = 0
+    tool_result_tokens: int = 0
+    system_tokens: int = 0
+    thinking_tokens: int = 0
+    context_window: int = 0
+    utilization_percent: float = 0.0
+    has_thinking: bool = False
+
+
+def token_stats_to_metrics(stats: TokenStats) -> dict[str, Any]:
+    return {
+        "context": {
+            "total_tokens": stats.total_tokens,
+            "context_window": stats.context_window,
+            "free_tokens": max(0, stats.context_window - stats.total_tokens),
+            "utilization_percent": stats.utilization_percent,
+        },
+        "messages": {
+            "user_tokens": stats.user_tokens,
+            "assistant_tokens": stats.assistant_tokens,
+            "tool_call_tokens": stats.tool_call_tokens,
+            "tool_result_tokens": stats.tool_result_tokens,
+            "system_tokens": stats.system_tokens,
+        },
+        "thinking": {
+            "has_thinking_blocks": stats.has_thinking,
+            "thinking_tokens": stats.thinking_tokens,
+        },
+        "health": {
+            "status": _get_health_status(stats.utilization_percent),
+            "warnings": _get_warnings(stats),
+        },
+    }
+
+
+def _get_health_status(utilization: float) -> str:
+    if utilization < 50:
+        return "healthy"
+    elif utilization < 75:
+        return "moderate"
+    elif utilization < 90:
+        return "high"
+    else:
+        return "critical"
+
+
+def _get_warnings(stats: TokenStats) -> list[str]:
+    warnings = []
+
+    if stats.utilization_percent > 80:
+        warnings.append(f"上下文使用率过高: {stats.utilization_percent:.1f}%")
+
+    if stats.tool_result_tokens > stats.total_tokens * 0.5:
+        warnings.append("工具结果占用超过 50% 上下文")
+
+    if stats.thinking_tokens > 10000:
+        warnings.append(f"Thinking 块占用大量 tokens: {stats.thinking_tokens}")
+
+    return warnings
+
+
+def compute_token_stats(
+    messages: list[dict],
+    system_prompt: str = "",
+    context_window: int = 128000,
+) -> TokenStats:
+    stats = TokenStats(context_window=context_window)
+    stats.has_thinking = has_thinking_blocks(messages)
+    stats.thinking_tokens = count_thinking_tokens(messages)
+
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        content_tokens = _estimate_tokens_for_text(str(content) if not isinstance(content, str) else content)
+
+        if role == "user":
+            stats.user_tokens += content_tokens
+        elif role == "assistant":
+            stats.assistant_tokens += content_tokens
+            tool_calls = msg.get("tool_calls") or []
+            for tc in tool_calls:
+                tc_tokens = _estimate_tokens_for_text(str(tc))
+                stats.tool_call_tokens += tc_tokens
+        elif role == "tool":
+            stats.tool_result_tokens += content_tokens
+        elif role == "system":
+            stats.system_tokens += content_tokens
+
+    stats.system_tokens += _estimate_tokens_for_text(system_prompt)
+    stats.total_tokens = (
+        stats.user_tokens +
+        stats.assistant_tokens +
+        stats.tool_call_tokens +
+        stats.tool_result_tokens +
+        stats.system_tokens +
+        stats.thinking_tokens
+    )
+
+    if stats.context_window > 0:
+        stats.utilization_percent = round(stats.total_tokens / stats.context_window * 100, 1)
+
+    return stats

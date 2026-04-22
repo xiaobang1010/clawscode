@@ -17,6 +17,7 @@ from src.services.agent_context import (
     create_query_tracking,
 )
 from src.services.cache_params import CacheSafeParams, cache_params_match
+from src.services.sidechain_storage import record_sidechain_transcript
 from src.services.token_counter import count_tokens
 from src.tool import Tool, ToolResult
 
@@ -263,6 +264,16 @@ async def run_forked_agent(
         isolated_context.read_file_state.clear()
 
     duration_ms = int((time.time() - start_time) * 1000)
+
+    if not params.skip_transcript and output_messages:
+        try:
+            record_sidechain_transcript(
+                messages=output_messages,
+                agent_id=isolated_context.agent_id,
+                parent_session_id=params.cache_safe_params.session_id,
+            )
+        except Exception:
+            pass
 
     log_fork_agent_query_event(
         fork_label=params.fork_label,

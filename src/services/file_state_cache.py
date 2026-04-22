@@ -170,7 +170,9 @@ def cache_keys(cache: FileStateCache) -> list[str]:
     return list(cache.keys())
 
 
-def clone_file_state_cache(cache: FileStateCache) -> FileStateCache:
+def clone_file_state_cache(cache: FileStateCache | None) -> FileStateCache:
+    if cache is None:
+        return create_file_state_cache()
     cloned = create_file_state_cache(cache.max_entries, cache.max_size_bytes)
     cloned.load(cache.dump())
     return cloned

@@ -20,6 +20,8 @@ from src.services.compact_engine import (
     format_compact_summary,
     auto_compact_with_priority,
 )
+from src.services.message_normalizer import normalize_messages_for_api, ensure_tool_result_pairing
+from src.services.message_tombstone import filter_tombstone_messages
 from src.services.token_budget import DiminishingReturnDetector
 from src.services.token_counter import count_tokens
 from src.services.tool_result_storage import apply_tool_result_budget
@@ -187,9 +189,13 @@ class QueryEngine:
         current_tool_calls: dict[int, dict] = {}
         finish_reason = None
 
+        filtered_messages = filter_tombstone_messages(self._state.messages)
+        normalized_messages = normalize_messages_for_api(filtered_messages)
+        normalized_messages = ensure_tool_result_pairing(normalized_messages)
+
         try:
             async for event in create_stream(
-                self._state.messages,
+                normalized_messages,
                 tool_schemas,
                 self._system_prompt,
                 model=self._config.model,
@@ -562,9 +568,13 @@ async def _run_one_turn(
     current_tool_calls: dict[int, dict] = {}
     finish_reason = None
 
+    filtered_messages = filter_tombstone_messages(state.messages)
+    normalized_messages = normalize_messages_for_api(filtered_messages)
+    normalized_messages = ensure_tool_result_pairing(normalized_messages)
+
     try:
         async for event in create_stream(
-            state.messages,
+            normalized_messages,
             tool_schemas,
             system_prompt,
             model=context.settings.model,
