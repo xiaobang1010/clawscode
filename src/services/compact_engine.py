@@ -394,6 +394,9 @@ async def compact_with_llm(
             return compact_if_needed(messages, max_tokens)
 
         result = apply_compaction(messages, summary_text)
+        result_tokens = count_tokens(result)
+        if partial and result_tokens > max_tokens * 0.9:
+            return await compact_with_llm(messages, max_tokens, create_stream_fn, custom_instructions, partial=False)
         _consecutive_failures = 0
         return result
 
@@ -409,7 +412,8 @@ async def reactive_compact(
     max_retries: int = REACTIVE_COMPACT_MAX_RETRIES,
 ) -> list[dict]:
     for attempt in range(max_retries):
-        result = await compact_with_llm(messages, max_tokens, create_stream_fn)
+        use_partial = (attempt == 0)
+        result = await compact_with_llm(messages, max_tokens, create_stream_fn, partial=use_partial)
         used = count_tokens(result)
         if used <= max_tokens:
             return result
@@ -611,7 +615,7 @@ async def auto_compact_with_priority(
     if result_tokens <= max_tokens * 0.9:
         return _inject_post_compact_context(result)
 
-    compacted = await compact_with_llm(messages, max_tokens, create_stream_fn)
+    compacted = await compact_with_llm(messages, max_tokens, create_stream_fn, partial=True)
     return _inject_post_compact_context(compacted)
 
 

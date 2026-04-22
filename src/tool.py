@@ -17,6 +17,7 @@ class ToolResult(BaseModel):
     output: str
     error: str | None = None
     is_error: bool = False
+    metadata: dict = {}
 
     def truncate(self, max_chars: int = 25000) -> ToolResult:
         if len(self.output) > max_chars:

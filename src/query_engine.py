@@ -19,6 +19,7 @@ from src.services.compact_engine import (
     format_compact_summary,
     auto_compact_with_priority,
 )
+from src.services.token_budget import DiminishingReturnDetector
 from src.services.token_counter import count_tokens
 from src.services.tool_result_storage import apply_tool_result_budget
 from src.state import SessionState
@@ -46,6 +47,7 @@ class QueryState:
     stop_hook_active: bool = False
     last_compact_tokens_before: int = 0
     last_compact_tokens_after: int = 0
+    active_skill_tools: list[str] | None = None
 
 
 def _create_hook_context(
@@ -92,6 +94,7 @@ async def create_query_loop(
     hook_executor: HookExecutor | None = None,
 ) -> AsyncGenerator[StreamEvent, None]:
     state = QueryState(messages=list(history) + user_messages)
+    _diminishing_detector = DiminishingReturnDetector()
 
     context.session_state = SessionState.RUNNING
 
@@ -102,7 +105,7 @@ async def create_query_loop(
     while True:
         transition = await _run_one_turn(
             state, tools, context, system_prompt,
-            permission_checker, hook_executor,
+            permission_checker, hook_executor, _diminishing_detector,
         )
 
         if transition == Transition.COMPLETED:
@@ -141,7 +144,7 @@ async def create_query_loop(
             try:
                 compacted = await reactive_compact(
                     state.messages,
-                    context.settings.max_tokens,
+                    context.settings.effective_max_tokens,
                     create_stream_fn=create_stream,
                 )
                 state.messages = compacted
@@ -164,13 +167,16 @@ async def _run_one_turn(
     system_prompt: str,
     permission_checker: PermissionChecker | None,
     hook_executor: HookExecutor | None,
+    diminishing_detector: DiminishingReturnDetector | None = None,
 ) -> Transition:
     active_tools = [t for t in tools if not getattr(t, "is_lazy", False)]
+    if state.active_skill_tools is not None:
+        active_tools = [t for t in active_tools if t.name in state.active_skill_tools]
     tool_schemas = [t.get_openai_tool_schema() for t in active_tools]
     tool_map = {t.name: t for t in active_tools}
 
     if not state.stop_hook_active:
-        await _maybe_proactive_compact(state, context, hook_executor)
+        await _maybe_proactive_compact(state, context, hook_executor, diminishing_detector)
 
     has_tool_calls = False
     current_tool_calls: dict[int, dict] = {}
@@ -211,15 +217,15 @@ async def _run_one_turn(
             if event.type == "finish_reason":
                 finish_reason = event.data.get("reason")
 
-    save_cache_safe_params(build_cache_safe_params(
-        system_prompt=system_prompt,
-        tools=tool_schemas,
-        messages=state.messages,
-        model=context.settings.model if hasattr(context, "settings") else "",
-        base_url=context.settings.base_url if hasattr(context, "settings") else "",
-        api_key=context.settings.api_key if hasattr(context, "settings") else "",
-    ))
-
+        save_cache_safe_params(build_cache_safe_params(
+            system_prompt=system_prompt,
+            tools=tool_schemas,
+            messages=state.messages,
+            model=context.settings.model if hasattr(context, "settings") else "",
+            base_url=context.settings.base_url if hasattr(context, "settings") else "",
+            api_key=context.settings.api_key if hasattr(context, "settings") else "",
+            prefix_count=2,
+        ))
     except Exception as e:
         error_str = str(e).lower()
         if any(kw in error_str for kw in ["prompt_too_long", "context_length", "max.*token", "too many tokens"]):
@@ -266,6 +272,10 @@ async def _run_one_turn(
     )
 
     for tc, result in results:
+        if result.metadata and "allowed_tools" in result.metadata:
+            state.active_skill_tools = result.metadata["allowed_tools"]
+
+    for tc, result in results:
         state.messages.append(
             {
                 "role": "tool",
@@ -286,8 +296,14 @@ async def _maybe_proactive_compact(
     state: QueryState,
     context: Any,
     hook_executor: HookExecutor | None,
+    diminishing_detector: DiminishingReturnDetector | None = None,
 ) -> None:
-    max_ctx = getattr(context.settings, 'max_tokens', 128000) if hasattr(context, 'settings') else 128000
+    from src.services.token_budget import infer_context_window
+    settings = getattr(context, 'settings', None)
+    if settings:
+        max_ctx = settings.effective_max_tokens
+    else:
+        max_ctx = 128000
     est_tokens = count_tokens(state.messages)
 
     if est_tokens <= max_ctx * 0.8:
@@ -308,6 +324,15 @@ async def _maybe_proactive_compact(
     state.messages = micro_compact(state.messages)
     state.messages = apply_tool_result_budget(state.messages)
     state.last_compact_tokens_after = count_tokens(state.messages)
+
+    saved = state.last_compact_tokens_before - state.last_compact_tokens_after
+    if diminishing_detector is not None:
+        diminishing_detector.record(max(0, saved))
+        if diminishing_detector.is_diminishing():
+            state.messages.append({
+                "role": "user",
+                "content": "[系统提示] 上下文压缩效果递减，建议使用 /compact 手动压缩或重启会话。",
+            })
 
     est_tokens = state.last_compact_tokens_after
     if est_tokens > max_ctx * 0.9:

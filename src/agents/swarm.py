@@ -12,7 +12,7 @@ from src.agents.builtins import get_builtin_agents
 from src.agents.builder import AgentBuilder
 from src.agents.display import AgentDisplayManager
 from src.api_client import create_stream
-from src.services.agent_context import AgentContextManager, SubagentContext, create_isolated_agent_state
+from src.services.agent_context import AgentContextManager, SubagentContext, create_isolated_agent_state, generate_agent_id
 from src.tool import Tool, ToolResult
 
 
@@ -65,7 +65,7 @@ class TeamCreateTool(Tool):
     async def call(self, input: TeamCreateInput, context: Any) -> ToolResult:
         import time
 
-        team_id = str(uuid.uuid4())[:8]
+        team_id = generate_agent_id(input.team_name, "team")
         team = SwarmTeam(
             team_id=team_id,
             name=input.team_name,
@@ -81,7 +81,7 @@ class TeamCreateTool(Tool):
                     output=f"未找到 Agent 类型: {agent_type}",
                     is_error=True,
                 )
-            member_id = str(uuid.uuid4())[:8]
+            member_id = generate_agent_id(agent_type, input.team_name)
             team.members[member_id] = SwarmMember(
                 member_id=member_id,
                 agent_name=definition.name,

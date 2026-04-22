@@ -56,6 +56,7 @@ class MemoryDiscovery:
         return "reference"
 
     def load_merged(self) -> str:
+        from src.agents.memory import memory_freshness_note
         discovered = self.discover_all()
         if not discovered:
             return ""
@@ -65,7 +66,10 @@ class MemoryDiscovery:
             try:
                 content = path.read_text(encoding="utf-8").strip()
                 if content:
+                    freshness = memory_freshness_note(path)
                     parts.append(f"--- {level} ({path}) ---\n{content}")
+                    if freshness:
+                        parts.append(freshness)
             except (OSError, UnicodeDecodeError):
                 continue
 

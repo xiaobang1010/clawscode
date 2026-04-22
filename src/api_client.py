@@ -35,6 +35,12 @@ async def create_stream(
         system_msg["cache_control"] = {"type": "ephemeral"}
     openai_messages = [system_msg] + messages
 
+    if cache_messages and openai_messages:
+        for i in range(len(openai_messages) - 1, -1, -1):
+            if openai_messages[i].get("role") == "user":
+                openai_messages[i]["cache_control"] = {"type": "ephemeral"}
+                break
+
     kwargs: dict = {
         "model": model,
         "messages": openai_messages,

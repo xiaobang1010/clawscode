@@ -636,6 +636,22 @@ def register_commands(registry: CommandRegistry) -> None:
         msg_count = len(session_data.messages or [])
         return f"✅ 已导入会话: {title} ({msg_count} 条消息, ID: {session_data.session_id[:8]})"
 
+    async def context_command(args: str, context: Any) -> str:
+        from src.services.context_analysis import analyze_context_usage, format_context_report
+        messages = getattr(context, "messages", [])
+        if not messages:
+            return "无对话历史，无法分析上下文使用情况。"
+        settings = getattr(context, "settings", None)
+        max_tokens = getattr(settings, "max_tokens", 128000) if settings else 128000
+        system_prompt = getattr(context, "_current_system_prompt", "")
+        data = analyze_context_usage(
+            messages=messages,
+            system_prompt=system_prompt,
+            tools_schema=None,
+            context_window=max_tokens,
+        )
+        return format_context_report(data)
+
     # --- 注册所有命令 ---
 
     registry.register("help", help_command)
@@ -659,3 +675,4 @@ def register_commands(registry: CommandRegistry) -> None:
     registry.register("sessions", sessions_command)
     registry.register("export", export_command)
     registry.register("import", import_command)
+    registry.register("context", context_command)

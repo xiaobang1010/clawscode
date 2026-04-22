@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
@@ -60,6 +61,11 @@ def get_agent_state() -> dict[str, Any]:
 
 def set_agent_state(state: dict[str, Any]) -> None:
     _current_agent_state.set(state)
+
+
+def generate_agent_id(name: str, team: str = "main") -> str:
+    raw = f"{name}@{team}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:8]
 
 
 def create_isolated_agent_state(

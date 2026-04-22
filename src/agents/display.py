@@ -22,6 +22,7 @@ class AgentDisplayState:
     color_start: str
     color_end: str
     depth: int = 0
+    display_name: str = ""
 
 
 class AgentDisplayManager:
@@ -30,8 +31,9 @@ class AgentDisplayManager:
         self._color_index: int = 0
         self._active_agents: list[str] = []
 
-    def register_agent(self, agent_name: str) -> str:
-        agent_id = str(uuid.uuid4())[:8]
+    def register_agent(self, agent_name: str, team_name: str = "main") -> str:
+        from src.services.agent_context import generate_agent_id
+        agent_id = generate_agent_id(agent_name, team_name)
         color_start, color_end = AGENT_COLORS[self._color_index % len(AGENT_COLORS)]
         self._color_index += 1
 
@@ -47,6 +49,7 @@ class AgentDisplayManager:
             color_start=color_start,
             color_end=color_end,
             depth=depth,
+            display_name=f"{agent_name}@{team_name}",
         )
         self._agents[agent_id] = state
         return agent_id
@@ -65,7 +68,8 @@ class AgentDisplayManager:
             return text
 
         indent = "  " * state.depth
-        prefix = f"{state.color_start}[{state.agent_name}]{state.color_end}"
+        display_name = getattr(state, 'display_name', None) or state.agent_name
+        prefix = f"{state.color_start}[{display_name}]{state.color_end}"
         lines = text.split("\n")
         formatted_lines = []
         for line in lines:
@@ -78,14 +82,14 @@ class AgentDisplayManager:
             return message
 
         indent = "  " * state.depth
-        return f"{indent}{state.color_start}⏳ [{state.agent_name}] {message}{state.color_end}"
+        return f"{indent}{state.color_start}⏳ [{getattr(state, 'display_name', None) or state.agent_name}] {message}{state.color_end}"
 
     def format_start(self, agent_id: str) -> str:
         state = self._agents.get(agent_id)
         if not state:
             return ""
         indent = "  " * state.depth
-        return f"{indent}{state.color_start}▶ [{state.agent_name}] 开始执行{state.color_end}"
+        return f"{indent}{state.color_start}▶ [{getattr(state, 'display_name', None) or state.agent_name}] 开始执行{state.color_end}"
 
     def format_done(self, agent_id: str, summary: str = "") -> str:
         state = self._agents.get(agent_id)
@@ -93,14 +97,14 @@ class AgentDisplayManager:
             return ""
         indent = "  " * state.depth
         suffix = f": {summary[:100]}" if summary else ""
-        return f"{indent}{state.color_start}✔ [{state.agent_name}] 完成{suffix}{state.color_end}"
+        return f"{indent}{state.color_start}✔ [{getattr(state, 'display_name', None) or state.agent_name}] 完成{suffix}{state.color_end}"
 
     def format_error(self, agent_id: str, error: str) -> str:
         state = self._agents.get(agent_id)
         if not state:
             return f"错误: {error}"
         indent = "  " * state.depth
-        return f"{indent}{state.color_start}✘ [{state.agent_name}] 错误: {error}{state.color_end}"
+        return f"{indent}{state.color_start}✘ [{getattr(state, 'display_name', None) or state.agent_name}] 错误: {error}{state.color_end}"
 
     def get_active_count(self) -> int:
         return len(self._active_agents)

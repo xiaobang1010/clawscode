@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime
@@ -114,3 +115,43 @@ class SessionStorage:
     def _get_session_path(self, session_id: str) -> Path:
         safe_id = session_id.replace("/", "_").replace("\\", "_")
         return self._sessions_dir / f"{safe_id}{SESSION_FILE_SUFFIX}"
+
+
+class AutoSaveManager:
+    def __init__(self, storage: SessionStorage, interval: int = 60):
+        self._storage = storage
+        self._interval = interval
+        self._session: SessionData | None = None
+        self._task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+
+    def set_session(self, session: SessionData) -> None:
+        self._session = session
+
+    async def start(self) -> None:
+        if self._interval <= 0:
+            return
+        self._task = asyncio.create_task(self._auto_save_loop())
+
+    async def _auto_save_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            await self.save_now()
+
+    async def save_now(self) -> None:
+        if self._session is None:
+            return
+        async with self._lock:
+            try:
+                self._storage.save(self._session)
+            except Exception:
+                pass
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        await self.save_now()

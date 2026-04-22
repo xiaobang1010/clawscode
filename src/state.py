@@ -81,6 +81,14 @@ class Settings:
     session: SessionConfig = field(default_factory=SessionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
 
+    @property
+    def effective_max_tokens(self) -> int:
+        from src.services.token_budget import infer_context_window
+        inferred = infer_context_window(self.model)
+        if self.max_tokens != 128000:
+            return self.max_tokens
+        return inferred
+
 
 @dataclass
 class AppState:

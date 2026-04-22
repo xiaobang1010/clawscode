@@ -41,7 +41,8 @@ class SkillTool(Tool):
                 pass
 
         return ToolResult(
-            output=f'Skill "{skill.name}" 已加载。\n\n{prompt}'
+            output=f'Skill "{skill.name}" 已加载。\n\n{prompt}',
+            metadata={"allowed_tools": skill.allowed_tools, "skill_name": skill.name},
         )
 
     def _get_registry(self):

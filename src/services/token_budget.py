@@ -99,3 +99,60 @@ class TokenBudgetManager:
             f"工具结果: {total_tool_chars} chars ({len(self._tool_budgets)} 工具) | "
             f"流式: {self._streaming_tokens} tokens"
         )
+
+
+MODEL_CONTEXT_WINDOW_MAP: dict[str, int] = {
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "gpt-4-turbo": 128000,
+    "gpt-4": 8192,
+    "gpt-3.5-turbo": 16385,
+    "claude-3.5-sonnet": 200000,
+    "claude-3-opus": 200000,
+    "claude-3-sonnet": 200000,
+    "claude-3-haiku": 200000,
+    "claude-sonnet-4": 200000,
+    "ZhipuAI/GLM-5": 128000,
+    "deepseek-chat": 64000,
+    "deepseek-coder": 16000,
+    "qwen-max": 32000,
+    "qwen-plus": 131072,
+    "qwen-turbo": 131072,
+    "gemini-1.5-pro": 2097152,
+    "gemini-1.5-flash": 1048576,
+}
+
+
+def infer_context_window(model: str, default: int = 128000) -> int:
+    if not model:
+        return default
+    if model in MODEL_CONTEXT_WINDOW_MAP:
+        return MODEL_CONTEXT_WINDOW_MAP[model]
+    for prefix, window in MODEL_CONTEXT_WINDOW_MAP.items():
+        if model.startswith(prefix):
+            return window
+    return default
+
+
+class DiminishingReturnDetector:
+    def __init__(self, window_size: int = 5, threshold: float = 0.3):
+        self._history: list[int] = []
+        self._window_size = window_size
+        self._threshold = threshold
+
+    def record(self, saved_tokens: int) -> None:
+        self._history.append(saved_tokens)
+        if len(self._history) > self._window_size:
+            self._history = self._history[-self._window_size:]
+
+    def is_diminishing(self) -> bool:
+        if len(self._history) < 3:
+            return False
+        recent = self._history[-3:]
+        for i in range(len(recent) - 1):
+            if recent[i] == 0:
+                return True
+            reduction = (recent[i] - recent[i + 1]) / recent[i]
+            if reduction < self._threshold:
+                return False
+        return True
