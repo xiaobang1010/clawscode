@@ -49,12 +49,35 @@ def register_commands(registry: CommandRegistry) -> None:
     async def compact_command(args: str, context: Any) -> str:
         from src.services.token_counter import count_tokens
         from src.compact import compact_if_needed
+        from src.services.compact_engine import PartialCompactDirection, build_partial_compact_messages, apply_compaction
 
         if not hasattr(context, "messages"):
             return "无对话历史"
 
+        direction = None
+        direction_arg = args.strip().lower()
+        if direction_arg in ("from", "up-to", "up_to"):
+            direction = PartialCompactDirection.UP_TO if direction_arg in ("up-to", "up_to") else PartialCompactDirection.FROM
+
         before_count = len(context.messages)
         before_tokens = count_tokens(context.messages)
+
+        if direction is not None:
+            compact_messages = build_partial_compact_messages(
+                context.messages,
+                recent_count=10,
+                direction=direction,
+            )
+            context.messages = compact_messages
+            after_count = len(context.messages)
+            after_tokens = count_tokens(context.messages)
+            freed = before_tokens - after_tokens
+            direction_str = "up-to" if direction == PartialCompactDirection.UP_TO else "from"
+            return (
+                f"压缩完成（{direction_str} 方向）：{before_count} → {after_count} 条消息，"
+                f"释放 {freed} tokens"
+            )
+
         context.messages = await compact_if_needed(
             context.messages, context.settings.max_tokens
         )

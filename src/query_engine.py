@@ -4,7 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Callable
 
 from src.api_client import StreamEvent, create_stream
 from src.compact import compact_if_needed
@@ -12,7 +12,8 @@ from src.hooks.types import HookContext, HookEvent
 from src.hooks.executor import HookExecutor
 from src.hooks.registry import HookRegistry
 from src.permissions import PermissionChecker
-from src.services.cache_params import save_cache_safe_params, build_cache_safe_params
+from src.services.agent_context import FileStateCache, ToolUseContext
+from src.services.cache_params import save_cache_safe_params, build_cache_safe_params, CacheSafeParams
 from src.services.compact_engine import (
     micro_compact,
     reactive_compact,
@@ -48,6 +49,385 @@ class QueryState:
     last_compact_tokens_before: int = 0
     last_compact_tokens_after: int = 0
     active_skill_tools: list[str] | None = None
+
+
+@dataclass
+class QueryEngineConfig:
+    model: str = ""
+    api_key: str = ""
+    base_url: str = ""
+    max_tokens: int = 128000
+    max_turns: int = 100
+
+
+class QueryEngine:
+    def __init__(
+        self,
+        tools: list[Tool],
+        context: Any,
+        system_prompt: str,
+        config: QueryEngineConfig | None = None,
+        permission_checker: PermissionChecker | None = None,
+        hook_executor: HookExecutor | None = None,
+    ):
+        self._tools = tools
+        self._context = context
+        self._system_prompt = system_prompt
+        self._config = config or QueryEngineConfig()
+        self._permission_checker = permission_checker
+        self._hook_executor = hook_executor
+        self._state = QueryState()
+        self._diminishing_detector = DiminishingReturnDetector()
+        self._read_file_state = FileStateCache()
+        self._tool_use_context: ToolUseContext | None = None
+        self._abort_event: asyncio.Event | None = None
+        self._cache_safe_params: CacheSafeParams | None = None
+
+    @property
+    def messages(self) -> list[dict]:
+        return self._state.messages
+
+    @property
+    def read_file_state(self) -> FileStateCache:
+        return self._read_file_state
+
+    @property
+    def state(self) -> QueryState:
+        return self._state
+
+    def get_messages(self) -> list[dict]:
+        return list(self._state.messages)
+
+    def get_read_file_state(self) -> FileStateCache:
+        return self._read_file_state
+
+    def set_history(self, history: list[dict]) -> None:
+        self._state.messages = list(history)
+
+    def interrupt(self) -> None:
+        if self._abort_event is not None:
+            self._abort_event.set()
+
+    async def submit_message(
+        self,
+        user_messages: list[dict],
+    ) -> AsyncGenerator[StreamEvent, None]:
+        self._state.messages.extend(user_messages)
+        self._context.session_state = SessionState.RUNNING
+
+        if self._hook_executor is not None:
+            hook_ctx = self._create_hook_context(HookEvent.SESSION_START)
+            await self._hook_executor.execute(hook_ctx)
+
+        while True:
+            transition = await self._run_one_turn()
+
+            if transition == Transition.COMPLETED:
+                if self._hook_executor is not None:
+                    stop_result = await self._execute_stop_hooks()
+                    if stop_result.get("prevent_continuation"):
+                        self._context.session_state = SessionState.IDLE
+                        break
+                    if stop_result.get("blocking_error"):
+                        self._state.messages.append({
+                            "role": "user",
+                            "content": f"[Stop Hook 反馈] {stop_result['blocking_error']}",
+                        })
+                        self._state.stop_hook_active = True
+                        continue
+
+                self._context.session_state = SessionState.IDLE
+                break
+
+            elif transition == Transition.ABORTED:
+                self._context.session_state = SessionState.IDLE
+                break
+
+            elif transition == Transition.MAX_OUTPUT_TOKENS_RECOVERY:
+                if self._state.max_output_tokens_recovery_count < MAX_OUTPUT_TOKENS_RECOVERY_LIMIT:
+                    self._state.messages.append({
+                        "role": "user",
+                        "content": "请继续生成，从中断处恢复。不要重复已生成的内容。",
+                    })
+                    self._state.max_output_tokens_recovery_count += 1
+                else:
+                    self._context.session_state = SessionState.IDLE
+                    break
+
+            elif transition == Transition.REACTIVE_COMPACT_RETRY:
+                try:
+                    compacted = await reactive_compact(
+                        self._state.messages,
+                        self._config.max_tokens,
+                        create_stream_fn=create_stream,
+                    )
+                    self._state.messages = compacted
+                except Exception:
+                    self._context.session_state = SessionState.IDLE
+                    break
+
+            elif transition == Transition.STOP_HOOK_BLOCKING:
+                continue
+
+            elif transition == Transition.NEXT_TURN:
+                self._state.max_output_tokens_recovery_count = 0
+                self._state.stop_hook_active = False
+
+    async def _run_one_turn(self) -> Transition:
+        active_tools = [t for t in self._tools if not getattr(t, "is_lazy", False)]
+        if self._state.active_skill_tools is not None:
+            active_tools = [t for t in active_tools if t.name in self._state.active_skill_tools]
+        tool_schemas = [t.get_openai_tool_schema() for t in active_tools]
+        tool_map = {t.name: t for t in active_tools}
+
+        if not self._state.stop_hook_active:
+            await self._maybe_proactive_compact()
+
+        has_tool_calls = False
+        current_tool_calls: dict[int, dict] = {}
+        finish_reason = None
+
+        try:
+            async for event in create_stream(
+                self._state.messages,
+                tool_schemas,
+                self._system_prompt,
+                model=self._config.model,
+                api_key=self._config.api_key,
+                base_url=self._config.base_url,
+            ):
+                if event.type == "tool_calls":
+                    has_tool_calls = True
+                    idx = event.data.get("index", 0)
+                    if idx not in current_tool_calls:
+                        current_tool_calls[idx] = {
+                            "id": event.data["id"],
+                            "name": event.data["name"],
+                            "arguments": "",
+                        }
+                    current_tool_calls[idx]["arguments"] += event.data.get("arguments") or ""
+
+                if event.type == "usage":
+                    svc = getattr(self._context, "cost_tracker_service", None)
+                    if svc is not None:
+                        svc.record(
+                            input_tokens=event.data.get("input_tokens", 0),
+                            output_tokens=event.data.get("output_tokens", 0),
+                            model=event.data.get("model"),
+                            duration_ms=event.data.get("duration_ms", 0),
+                        )
+
+                if event.type == "finish_reason":
+                    finish_reason = event.data.get("reason")
+
+            self._cache_safe_params = build_cache_safe_params(
+                system_prompt=self._system_prompt,
+                tools=tool_schemas,
+                messages=self._state.messages,
+                model=self._config.model,
+                base_url=self._config.base_url,
+                api_key=self._config.api_key,
+                prefix_count=2,
+            )
+            save_cache_safe_params(self._cache_safe_params)
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(kw in error_str for kw in ["prompt_too_long", "context_length", "max.*token", "too many tokens"]):
+                return Transition.REACTIVE_COMPACT_RETRY
+            raise
+
+        if finish_reason == "length":
+            assistant_text = _collect_text_from_messages(current_tool_calls)
+            self._state.messages.append({
+                "role": "assistant",
+                "content": assistant_text or None,
+                "tool_calls": _build_tool_calls_content(current_tool_calls) if has_tool_calls else None,
+            })
+            return Transition.MAX_OUTPUT_TOKENS_RECOVERY
+
+        if not has_tool_calls:
+            return Transition.COMPLETED
+
+        assistant_content = []
+        for idx in sorted(current_tool_calls):
+            tc = current_tool_calls[idx]
+            assistant_content.append(
+                {
+                    "type": "function",
+                    "id": tc["id"],
+                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                }
+            )
+
+        sorted_tcs = [current_tool_calls[idx] for idx in sorted(current_tool_calls)]
+        results = await self._execute_tools(sorted_tcs, tool_map)
+
+        self._state.messages.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": assistant_content,
+            }
+        )
+
+        for tc, result in results:
+            if result.metadata and "allowed_tools" in result.metadata:
+                self._state.active_skill_tools = result.metadata["allowed_tools"]
+
+        for tc, result in results:
+            self._state.messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result.output,
+                }
+            )
+
+        return Transition.NEXT_TURN
+
+    async def _maybe_proactive_compact(self) -> None:
+        max_ctx = self._config.max_tokens
+        est_tokens = count_tokens(self._state.messages)
+
+        if est_tokens <= max_ctx * 0.8:
+            return
+
+        self._state.last_compact_tokens_before = est_tokens
+
+        if self._hook_executor is not None:
+            pre_ctx = self._create_hook_context(HookEvent.PRE_COMPACT)
+            await self._hook_executor.execute(pre_ctx)
+
+        self._state.messages = await auto_compact_with_priority(
+            self._state.messages, max_ctx, create_stream_fn=create_stream
+        )
+
+        if self._hook_executor is not None:
+            post_ctx = self._create_hook_context(HookEvent.POST_COMPACT)
+            await self._hook_executor.execute(post_ctx)
+
+        self._state.messages = micro_compact(self._state.messages)
+        self._state.messages = apply_tool_result_budget(self._state.messages)
+        self._state.last_compact_tokens_after = count_tokens(self._state.messages)
+
+        saved = self._state.last_compact_tokens_before - self._state.last_compact_tokens_after
+        self._diminishing_detector.record(max(0, saved))
+        if self._diminishing_detector.is_diminishing():
+            self._state.messages.append({
+                "role": "user",
+                "content": "[系统提示] 上下文压缩效果递减，建议使用 /compact 手动压缩或重启会话。",
+            })
+
+        est_tokens = self._state.last_compact_tokens_after
+        if est_tokens > max_ctx * 0.9:
+            non_system = [m for m in self._state.messages if m.get("role") != "system"]
+            system = [m for m in self._state.messages if m.get("role") == "system"]
+            trim_count = max(1, len(non_system) // 4)
+            self._state.messages = system + non_system[trim_count:]
+
+    async def _execute_tools(
+        self,
+        tool_calls: list[dict],
+        tool_map: dict[str, Tool],
+    ) -> list[tuple[dict, ToolResult]]:
+
+        async def _execute_one(tc: dict) -> tuple[dict, ToolResult]:
+            tool = tool_map.get(tc["name"])
+            if tool is None:
+                return tc, ToolResult(
+                    output=f"工具 '{tc['name']}' 当前不可用（已延迟加载）",
+                    is_error=True,
+                )
+
+            if tool.name in ("FileEdit", "FileWrite"):
+                cwd = getattr(self._context, "cwd", None)
+                if cwd is not None and is_git_repo(cwd):
+                    if has_changes(cwd):
+                        self._context.checkpoint_count += 1
+                        create_checkpoint(cwd, self._context.checkpoint_count)
+
+            tool_input = tool.input_schema(**json.loads(tc["arguments"]))
+
+            if self._hook_executor is not None:
+                pre_ctx = self._create_hook_context(
+                    HookEvent.PRE_TOOL_USE,
+                    tool_name=tool.name,
+                    tool_input=tc.get("parsed_args", json.loads(tc["arguments"])),
+                )
+                pre_result = await self._hook_executor.execute_and_collect(pre_ctx)
+                if pre_result.should_block:
+                    return tc, ToolResult(
+                        output=f"操作被 Hook 阻止: {pre_result.output}",
+                        is_error=True,
+                    )
+
+            if self._permission_checker is not None:
+                perm = await self._permission_checker.check(tool, tool_input, self._context)
+            else:
+                perm = await tool.check_permissions(tool_input, self._context)
+
+            if perm == PermissionResult.DENY:
+                result = ToolResult(output="操作被拒绝", is_error=True)
+            elif perm == PermissionResult.ASK:
+                self._context.session_state = SessionState.REQUIRES_ACTION
+                result = await ask_user_permission(tool, tool_input, self._context, self._permission_checker)
+                self._context.session_state = SessionState.RUNNING
+                if result is None:
+                    result = ToolResult(output="用户拒绝了操作", is_error=True)
+            else:
+                result = await tool.call(tool_input, self._context)
+
+            max_chars = getattr(tool, "max_result_size_chars", 25000)
+            if len(result.output) > max_chars:
+                result = result.truncate(max_chars)
+
+            if self._hook_executor is not None:
+                post_ctx = self._create_hook_context(
+                    HookEvent.POST_TOOL_USE,
+                    tool_name=tool.name,
+                    tool_input=json.loads(tc["arguments"]),
+                    tool_output=result.output,
+                )
+                await self._hook_executor.execute(post_ctx)
+
+            return tc, result
+
+        return await asyncio.gather(*[_execute_one(tc) for tc in tool_calls])
+
+    async def _execute_stop_hooks(self) -> dict[str, Any]:
+        stop_ctx = self._create_hook_context(HookEvent.STOP)
+        results = await self._hook_executor.execute(stop_ctx)
+
+        blocking_error = ""
+        prevent_continuation = False
+
+        for result in results:
+            if result.should_block:
+                if result.output:
+                    blocking_error += result.output + "\n"
+                if result.metadata.get("prevent_continuation"):
+                    prevent_continuation = True
+
+        return {
+            "blocking_error": blocking_error.strip(),
+            "prevent_continuation": prevent_continuation,
+        }
+
+    def _create_hook_context(
+        self,
+        event: HookEvent,
+        tool_name: str = "",
+        tool_input: dict | None = None,
+        tool_output: str = "",
+    ) -> HookContext:
+        return HookContext(
+            event=event,
+            tool_name=tool_name,
+            tool_input=tool_input or {},
+            tool_output=tool_output,
+            session_id=getattr(self._context, "session_id", ""),
+            messages=self._state.messages,
+        )
 
 
 def _create_hook_context(

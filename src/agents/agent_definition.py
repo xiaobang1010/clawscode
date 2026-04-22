@@ -31,6 +31,11 @@ class AgentDefinition:
     system_prompt: str = ""
     system_prompt_append: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
+    mcp_servers: list[dict[str, Any]] | None = None
+    background: bool = False
+    initial_prompt: str | None = None
+    critical_system_reminder: str | None = None
+    omit_claude_md: bool = False
 
     def get_allowed_tools(self) -> list[str] | None:
         if self.tools:
@@ -42,6 +47,9 @@ class AgentDefinition:
 
     def get_model_override(self) -> str | None:
         return self.model
+
+    def get_mcp_servers(self) -> list[dict[str, Any]]:
+        return self.mcp_servers or []
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,4 +66,9 @@ class AgentDefinition:
             "memory": self.memory,
             "memory_scope": self.memory_scope,
             "isolation": self.isolation,
+            "mcp_servers": self.mcp_servers,
+            "background": self.background,
+            "initial_prompt": self.initial_prompt,
+            "critical_system_reminder": self.critical_system_reminder,
+            "omit_claude_md": self.omit_claude_md,
         }
