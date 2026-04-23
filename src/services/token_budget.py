@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from src.services.token_counter import count_tokens
@@ -122,16 +123,64 @@ MODEL_CONTEXT_WINDOW_MAP: dict[str, int] = {
     "gemini-1.5-flash": 1048576,
 }
 
+MODEL_MAX_OUTPUT_TOKENS_MAP: dict[str, tuple[int, int]] = {
+    "claude-3-opus": (4096, 4096),
+    "claude-3-sonnet": (8192, 8192),
+    "claude-3-haiku": (8192, 8192),
+    "claude-sonnet-4": (16384, 16384),
+    "claude-opus-4": (16384, 32768),
+    "gpt-4": (8192, 8192),
+    "gpt-4o": (16384, 16384),
+    "deepseek-chat": (8192, 8192),
+}
+
+
+def get_model_max_output_tokens(model: str) -> tuple[int, int]:
+    if model in MODEL_MAX_OUTPUT_TOKENS_MAP:
+        return MODEL_MAX_OUTPUT_TOKENS_MAP[model]
+    for prefix, tokens in MODEL_MAX_OUTPUT_TOKENS_MAP.items():
+        if model.startswith(prefix):
+            return tokens
+    return (8192, 8192)
+
 
 def infer_context_window(model: str, default: int = 128000) -> int:
+    env_value = os.environ.get("CLAWSCODE_CONTEXT_WINDOW")
+    if env_value:
+        return int(env_value)
     if not model:
         return default
+    window = default
     if model in MODEL_CONTEXT_WINDOW_MAP:
-        return MODEL_CONTEXT_WINDOW_MAP[model]
-    for prefix, window in MODEL_CONTEXT_WINDOW_MAP.items():
-        if model.startswith(prefix):
-            return window
-    return default
+        window = MODEL_CONTEXT_WINDOW_MAP[model]
+    else:
+        for prefix, w in MODEL_CONTEXT_WINDOW_MAP.items():
+            if model.startswith(prefix):
+                window = w
+                break
+    pct_override = os.environ.get("CLAWSCODE_AUTOCOMPACT_PCT_OVERRIDE")
+    if pct_override:
+        return int(window * float(pct_override))
+    return window
+
+
+def get_effective_context_window_size(model: str, default: int = 128000) -> int:
+    context_window = infer_context_window(model, default)
+    _, max_output = get_model_max_output_tokens(model)
+    return context_window - min(max_output, 20000)
+
+
+def get_auto_compact_threshold(model: str, default: int = 128000) -> int:
+    effective_window = get_effective_context_window_size(model, default)
+    return effective_window - 13000
+
+
+def should_auto_compact(messages: list[dict], model: str, query_source: str = "", default: int = 128000) -> bool:
+    if query_source in ("session_memory", "compact", "marble_origami"):
+        return False
+    threshold = get_auto_compact_threshold(model, default)
+    used = count_tokens(messages)
+    return used >= threshold
 
 
 class DiminishingReturnDetector:
@@ -156,3 +205,100 @@ class DiminishingReturnDetector:
             if reduction < self._threshold:
                 return False
         return True
+
+
+import re as _re
+
+
+def parse_token_budget(text: str) -> int | None:
+    if not text:
+        return None
+    match = _re.match(r'^\+?(\d+(?:\.\d+)?)\s*([kKmMbB]?)[tT]?$',
+                       text.strip())
+    if not match:
+        return None
+    value = float(match.group(1))
+    unit = match.group(2).lower()
+    multipliers = {'k': 1000, 'm': 1_000_000, 'b': 1_000_000_000}
+    multiplier = multipliers.get(unit, 1)
+    return int(value * multiplier)
+
+
+def find_token_budget_positions(text: str) -> list[tuple[int, int, int]]:
+    pattern = r'\+?\d+(?:\.\d+)?\s*[kKmMbB]?[tT]?'
+    results: list[tuple[int, int, int]] = []
+    for match in _re.finditer(pattern, text):
+        value = parse_token_budget(match.group())
+        if value is not None:
+            results.append((match.start(), match.end(), value))
+    return results
+
+
+def get_budget_continuation_message(
+    pct: float,
+    turn_tokens: int,
+    budget: int,
+) -> str:
+    remaining = budget - int(budget * pct)
+    return (
+        f"已使用约 {pct:.0%} 的 token 预算（本轮 {turn_tokens:,} tokens，"
+        f"剩余约 {remaining:,} tokens）。继续工作，不要总结。"
+        f"完成当前任务的所有必要步骤。"
+    )
+
+
+class BudgetTracker:
+    def __init__(self, total_budget: int):
+        self.total_budget = total_budget
+        self.used_tokens = 0
+        self._turn_tokens: list[int] = []
+
+    def update(self, used: int) -> None:
+        self.used_tokens += used
+
+    def record_turn(self, turn_tokens: int) -> None:
+        self._turn_tokens.append(turn_tokens)
+        self.update(turn_tokens)
+
+    @property
+    def completion_pct(self) -> float:
+        if self.total_budget <= 0:
+            return 1.0
+        return min(1.0, self.used_tokens / self.total_budget)
+
+    def is_complete(self) -> bool:
+        return self.completion_pct >= 0.9
+
+    def should_continue(self) -> bool:
+        if self.is_complete():
+            return False
+        if len(self._turn_tokens) >= 3:
+            recent = self._turn_tokens[-3:]
+            if all(t < 100 for t in recent):
+                return False
+        return True
+
+
+def check_token_budget(tracker: BudgetTracker) -> dict[str, Any]:
+    should_stop = tracker.is_complete()
+    reason = ""
+    continuation_message = ""
+
+    if should_stop:
+        reason = "budget_exhausted"
+    elif not tracker.should_continue():
+        should_stop = True
+        reason = "diminishing_returns"
+    elif tracker.completion_pct >= 0.75:
+        continuation_message = get_budget_continuation_message(
+            tracker.completion_pct,
+            tracker._turn_tokens[-1] if tracker._turn_tokens else 0,
+            tracker.total_budget,
+        )
+
+    return {
+        "should_stop": should_stop,
+        "reason": reason,
+        "continuation_message": continuation_message,
+        "completion_pct": tracker.completion_pct,
+    }

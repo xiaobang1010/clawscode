@@ -42,6 +42,12 @@ class ExitPlanModeTool(Tool):
         checker.set_mode(PermissionMode.DEFAULT)
         context.settings.permission_mode = "default"
 
+        tools = getattr(context, "tools", None)
+        if tools is not None:
+            from src.services.agent_context import refresh_agent_definitions
+            refreshed = refresh_agent_definitions(tools, permission_mode="default")
+            context.tools = refreshed
+
         lines = ["已退出 Plan 模式，恢复默认权限。"]
         lines.append("所有工具已恢复可用。")
         if input.summary:

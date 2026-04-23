@@ -297,6 +297,12 @@ def register_commands(registry: CommandRegistry) -> None:
             if settings:
                 settings.permission_mode = mode
 
+            tools = getattr(context, "tools", None)
+            if tools is not None:
+                from src.services.agent_context import refresh_agent_definitions
+                refreshed = refresh_agent_definitions(tools, permission_mode=mode)
+                context.tools = refreshed
+
             return f"✅ 权限模式已切换为: {mode}"
 
         rules = persistence.load_rules()

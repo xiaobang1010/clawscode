@@ -19,9 +19,12 @@ from src.services.compact_engine import (
     reactive_compact,
     format_compact_summary,
     auto_compact_with_priority,
+    cached_micro_compact,
+    consume_pending_cache_edits,
 )
 from src.services.message_normalizer import normalize_messages_for_api, ensure_tool_result_pairing
 from src.services.message_tombstone import filter_tombstone_messages
+from src.services.history_snip import snip_message, get_snipped_messages
 from src.services.token_budget import DiminishingReturnDetector
 from src.services.token_counter import count_tokens
 from src.services.tool_result_storage import apply_tool_result_budget
@@ -35,6 +38,7 @@ class Transition(Enum):
     COMPLETED = "completed"
     MAX_OUTPUT_TOKENS_RECOVERY = "max_output_tokens_recovery"
     REACTIVE_COMPACT_RETRY = "reactive_compact_retry"
+    COLLAPSE_DRAIN_RETRY = "collapse_drain_retry"
     STOP_HOOK_BLOCKING = "stop_hook_blocking"
     ABORTED = "aborted"
 
@@ -51,6 +55,7 @@ class QueryState:
     last_compact_tokens_before: int = 0
     last_compact_tokens_after: int = 0
     active_skill_tools: list[str] | None = None
+    has_attempted_reactive_compact: bool = False
 
 
 @dataclass
@@ -157,6 +162,10 @@ class QueryEngine:
                     break
 
             elif transition == Transition.REACTIVE_COMPACT_RETRY:
+                if self._state.has_attempted_reactive_compact:
+                    self._context.session_state = SessionState.IDLE
+                    break
+                self._state.has_attempted_reactive_compact = True
                 try:
                     compacted = await reactive_compact(
                         self._state.messages,
@@ -164,6 +173,29 @@ class QueryEngine:
                         create_stream_fn=create_stream,
                     )
                     self._state.messages = compacted
+                except Exception:
+                    self._context.session_state = SessionState.IDLE
+                    break
+
+            elif transition == Transition.COLLAPSE_DRAIN_RETRY:
+                try:
+                    from src.services.context_collapse import recover_from_overflow, get_collapse_state
+                    from src.services.token_counter import count_tokens as _ct
+                    token_usage = _ct(self._state.messages)
+                    result = recover_from_overflow(
+                        self._state.messages,
+                        token_usage,
+                        self._config.max_tokens,
+                    )
+                    if result["committed"] > 0:
+                        self._state.messages = result["messages"]
+                    else:
+                        compacted = await reactive_compact(
+                            self._state.messages,
+                            self._config.max_tokens,
+                            create_stream_fn=create_stream,
+                        )
+                        self._state.messages = compacted
                 except Exception:
                     self._context.session_state = SessionState.IDLE
                     break
@@ -193,6 +225,17 @@ class QueryEngine:
         normalized_messages = normalize_messages_for_api(filtered_messages)
         normalized_messages = ensure_tool_result_pairing(normalized_messages)
 
+        _, pending_edits = cached_micro_compact(self._state.messages)
+        cache_edits_block = consume_pending_cache_edits()
+
+        stream_kwargs: dict[str, Any] = {}
+        if cache_edits_block is not None:
+            stream_kwargs["cache_edits"] = [
+                {"type": e.get("type", "cache_delete"), "tool_use_id": e.get("tool_use_id", "")}
+                for e in cache_edits_block.edits
+            ]
+            stream_kwargs["cache_reference"] = cache_edits_block.cache_reference
+
         try:
             async for event in create_stream(
                 normalized_messages,
@@ -201,6 +244,7 @@ class QueryEngine:
                 model=self._config.model,
                 api_key=self._config.api_key,
                 base_url=self._config.base_url,
+                **stream_kwargs,
             ):
                 if event.type == "tool_calls":
                     has_tool_calls = True
@@ -239,6 +283,12 @@ class QueryEngine:
         except Exception as e:
             error_str = str(e).lower()
             if any(kw in error_str for kw in ["prompt_too_long", "context_length", "max.*token", "too many tokens"]):
+                try:
+                    from src.services.context_collapse import is_context_collapse_enabled, drain_collapses, get_collapse_state
+                    if is_context_collapse_enabled():
+                        return Transition.COLLAPSE_DRAIN_RETRY
+                except ImportError:
+                    pass
                 return Transition.REACTIVE_COMPACT_RETRY
             raise
 
@@ -314,6 +364,12 @@ class QueryEngine:
 
         self._state.messages = micro_compact(self._state.messages)
         self._state.messages = apply_tool_result_budget(self._state.messages)
+
+        snipped = get_snipped_messages(self._state.messages)
+        if snipped:
+            for s in snipped:
+                self._state.messages = snip_message(self._state.messages, s.get("uuid", ""))
+
         self._state.last_compact_tokens_after = count_tokens(self._state.messages)
 
         saved = self._state.last_compact_tokens_before - self._state.last_compact_tokens_after
@@ -538,6 +594,29 @@ async def create_query_loop(
                 context.session_state = SessionState.IDLE
                 break
 
+        elif transition == Transition.COLLAPSE_DRAIN_RETRY:
+            try:
+                from src.services.context_collapse import recover_from_overflow
+                from src.services.token_counter import count_tokens as _ct2
+                token_usage = _ct2(state.messages)
+                result = recover_from_overflow(
+                    state.messages,
+                    token_usage,
+                    context.settings.effective_max_tokens,
+                )
+                if result["committed"] > 0:
+                    state.messages = result["messages"]
+                else:
+                    compacted = await reactive_compact(
+                        state.messages,
+                        context.settings.effective_max_tokens,
+                        create_stream_fn=create_stream,
+                    )
+                    state.messages = compacted
+            except Exception:
+                context.session_state = SessionState.IDLE
+                break
+
         elif transition == Transition.STOP_HOOK_BLOCKING:
             continue
 
@@ -572,6 +651,17 @@ async def _run_one_turn(
     normalized_messages = normalize_messages_for_api(filtered_messages)
     normalized_messages = ensure_tool_result_pairing(normalized_messages)
 
+    cached_micro_compact(state.messages)
+    cache_edits_block = consume_pending_cache_edits()
+
+    stream_kwargs: dict[str, Any] = {}
+    if cache_edits_block is not None:
+        stream_kwargs["cache_edits"] = [
+            {"type": e.get("type", "cache_delete"), "tool_use_id": e.get("tool_use_id", "")}
+            for e in cache_edits_block.edits
+        ]
+        stream_kwargs["cache_reference"] = cache_edits_block.cache_reference
+
     try:
         async for event in create_stream(
             normalized_messages,
@@ -580,6 +670,7 @@ async def _run_one_turn(
             model=context.settings.model,
             api_key=context.settings.api_key,
             base_url=context.settings.base_url,
+            **stream_kwargs,
         ):
             yield_placeholder = event
 
@@ -619,6 +710,12 @@ async def _run_one_turn(
     except Exception as e:
         error_str = str(e).lower()
         if any(kw in error_str for kw in ["prompt_too_long", "context_length", "max.*token", "too many tokens"]):
+            try:
+                from src.services.context_collapse import is_context_collapse_enabled
+                if is_context_collapse_enabled():
+                    return Transition.COLLAPSE_DRAIN_RETRY
+            except ImportError:
+                pass
             return Transition.REACTIVE_COMPACT_RETRY
         raise
 
@@ -713,6 +810,12 @@ async def _maybe_proactive_compact(
 
     state.messages = micro_compact(state.messages)
     state.messages = apply_tool_result_budget(state.messages)
+
+    snipped = get_snipped_messages(state.messages)
+    if snipped:
+        for s in snipped:
+            state.messages = snip_message(state.messages, s.get("uuid", ""))
+
     state.last_compact_tokens_after = count_tokens(state.messages)
 
     saved = state.last_compact_tokens_before - state.last_compact_tokens_after

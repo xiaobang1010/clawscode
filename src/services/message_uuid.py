@@ -9,16 +9,25 @@ def generate_uuid() -> str:
     return str(uuid.uuid4())
 
 
+def derive_uuid(parent_uuid: str, index: int) -> str:
+    hex_str = format(index, '012x')
+    return parent_uuid[:24] + hex_str
+
+
+def _is_progress_message(message: dict[str, Any]) -> bool:
+    return message.get("type") == "progress" or message.get("_type") == "progress"
+
+
 @dataclass
 class MessageChain:
     messages: list[dict[str, Any]] = field(default_factory=list)
     uuid_to_index: dict[str, int] = field(default_factory=dict)
 
     def add_message(self, message: dict[str, Any]) -> str:
-        msg_uuid = message.get("uuid") or generate_uuid()
+        msg_uuid = message["uuid"] if "uuid" in message else generate_uuid()
         parent_uuid = None
 
-        if self.messages:
+        if not _is_progress_message(message) and self.messages:
             last_msg = self.messages[-1]
             parent_uuid = last_msg.get("uuid")
 
@@ -76,7 +85,7 @@ class MessageChain:
         self.uuid_to_index = {}
 
         for msg in messages:
-            msg_uuid = msg.get("uuid") or generate_uuid()
+            msg_uuid = msg["uuid"] if "uuid" in msg else generate_uuid()
             msg["uuid"] = msg_uuid
 
             if self.messages:
@@ -141,7 +150,7 @@ def create_message_with_uuid(
     message: dict[str, Any],
     parent_uuid: str | None = None,
 ) -> dict[str, Any]:
-    msg_uuid = message.get("uuid") or generate_uuid()
+    msg_uuid = message["uuid"] if "uuid" in message else generate_uuid()
     message["uuid"] = msg_uuid
     message["parent_uuid"] = parent_uuid
     return message

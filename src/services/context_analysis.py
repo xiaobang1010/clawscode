@@ -128,7 +128,7 @@ def analyze_context_usage(
     return data
 
 
-def format_context_report(data: ContextData) -> str:
+def format_context_report(data: ContextData, stats: TokenStats | None = None) -> str:
     lines = ["=" * 50, "  上下文使用分析报告", "=" * 50, ""]
 
     lines.append(f"上下文窗口: {data.context_window:,} tokens")
@@ -150,6 +150,16 @@ def format_context_report(data: ContextData) -> str:
     lines.append(f"  助手消息:    {bd.assistant_message_tokens:>6,} tokens")
     lines.append(f"  工具调用:    {bd.tool_call_tokens:>6,} tokens")
     lines.append(f"  工具结果:    {bd.tool_result_tokens:>6,} tokens")
+
+    if stats and (stats.cache_read_input_tokens > 0 or stats.cache_creation_input_tokens > 0):
+        lines.append("")
+        lines.append("--- 缓存统计 ---")
+        lines.append(f"  缓存读取 tokens: {stats.cache_read_input_tokens:,}")
+        lines.append(f"  缓存创建 tokens: {stats.cache_creation_input_tokens:,}")
+        cache_total = stats.cache_read_input_tokens + stats.cache_creation_input_tokens
+        if cache_total > 0:
+            hit_rate = stats.cache_read_input_tokens / cache_total * 100
+            lines.append(f"  缓存命中率: {hit_rate:.1f}%")
 
     if data.duplicate_reads:
         lines.append("")
@@ -174,6 +184,8 @@ class TokenStats:
     context_window: int = 0
     utilization_percent: float = 0.0
     has_thinking: bool = False
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
 
 
 def token_stats_to_metrics(stats: TokenStats) -> dict[str, Any]:
@@ -194,6 +206,10 @@ def token_stats_to_metrics(stats: TokenStats) -> dict[str, Any]:
         "thinking": {
             "has_thinking_blocks": stats.has_thinking,
             "thinking_tokens": stats.thinking_tokens,
+        },
+        "cache": {
+            "cache_read_input_tokens": stats.cache_read_input_tokens,
+            "cache_creation_input_tokens": stats.cache_creation_input_tokens,
         },
         "health": {
             "status": _get_health_status(stats.utilization_percent),
@@ -225,6 +241,12 @@ def _get_warnings(stats: TokenStats) -> list[str]:
     if stats.thinking_tokens > 10000:
         warnings.append(f"Thinking 块占用大量 tokens: {stats.thinking_tokens}")
 
+    cache_total = stats.cache_read_input_tokens + stats.cache_creation_input_tokens
+    if cache_total > 0 and stats.total_tokens > 50000:
+        cache_hit_rate = stats.cache_read_input_tokens / cache_total * 100
+        if cache_hit_rate < 50:
+            warnings.append(f"缓存命中率过低: {cache_hit_rate:.1f}%")
+
     return warnings
 
 
@@ -232,6 +254,7 @@ def compute_token_stats(
     messages: list[dict],
     system_prompt: str = "",
     context_window: int = 128000,
+    api_usage: dict[str, Any] | None = None,
 ) -> TokenStats:
     stats = TokenStats(context_window=context_window)
     stats.has_thinking = has_thinking_blocks(messages)
@@ -267,5 +290,9 @@ def compute_token_stats(
 
     if stats.context_window > 0:
         stats.utilization_percent = round(stats.total_tokens / stats.context_window * 100, 1)
+
+    if api_usage is not None:
+        stats.cache_read_input_tokens = api_usage.get("cache_read_input_tokens", 0)
+        stats.cache_creation_input_tokens = api_usage.get("cache_creation_input_tokens", 0)
 
     return stats

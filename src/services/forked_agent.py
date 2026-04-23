@@ -178,6 +178,19 @@ async def run_forked_agent(
 
     initial_messages = list(cache_safe_params.fork_context_messages) + list(params.prompt_messages)
 
+    if params.skip_cache_write:
+        for msg in initial_messages:
+            if msg.get("role") == "user":
+                msg.pop("cache_control", None)
+
+    if params.max_output_tokens is not None and cache_safe_params.max_output_tokens is not None:
+        if params.max_output_tokens != cache_safe_params.max_output_tokens:
+            print(
+                f"[Fork Agent] WARNING: max_output_tokens mismatch in {params.fork_label}: "
+                f"fork={params.max_output_tokens}, parent={cache_safe_params.max_output_tokens}. "
+                f"This may cause cache misses due to different response parameters."
+            )
+
     max_turns = params.max_turns or 20
     current_usage = Usage()
 
@@ -187,6 +200,10 @@ async def run_forked_agent(
             current_tool_calls: dict[int, dict] = {}
             text_parts: list[str] = []
 
+            stream_kwargs: dict[str, Any] = {}
+            if params.skip_cache_write:
+                stream_kwargs["skip_cache_write"] = True
+
             async for event in create_stream(
                 initial_messages,
                 tool_schemas,
@@ -194,6 +211,7 @@ async def run_forked_agent(
                 model=model or cache_safe_params.model,
                 api_key=api_key or cache_safe_params.api_key,
                 base_url=base_url or cache_safe_params.base_url,
+                **stream_kwargs,
             ):
                 if event.type == "text_delta":
                     text_parts.append(event.data.get("text", ""))

@@ -184,6 +184,9 @@ class ContentReplacementState:
 
 MICRO_COMPACT_DEFAULT_MAX_CHARS = 25000
 MICRO_COMPACT_PREVIEW_RATIO = 0.4
+TIME_BASED_MICROCOMPACT_THRESHOLD_SECONDS = 300
+TIME_BASED_MICROCOMPACT_KEEP_RECENT = 5
+OLD_TOOL_RESULT_CLEAR_MARKER = "[Old tool result content cleared]"
 
 _consecutive_failures = 0
 _micro_replacement_log: list[ContentReplacementState] = []
@@ -405,6 +408,7 @@ async def compact_with_llm(
     create_stream_fn: Any = None,
     custom_instructions: str = "",
     partial: bool = False,
+    forked_agent_fn: Any = None,
 ) -> list[dict]:
     global _consecutive_failures
 
@@ -417,7 +421,7 @@ async def compact_with_llm(
     if _consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
         return compact_if_needed(messages, max_tokens)
 
-    if create_stream_fn is None:
+    if create_stream_fn is None and forked_agent_fn is None:
         return compact_if_needed(messages, max_tokens)
 
     try:
@@ -430,13 +434,22 @@ async def compact_with_llm(
             return messages
 
         summary_text = ""
-        async for event in create_stream_fn(
-            compact_msgs,
-            [],
-            NO_TOOLS_PREAMBLE.strip(),
-        ):
-            if event.type == "text_delta":
-                summary_text += event.data.get("text", "")
+
+        if forked_agent_fn is not None:
+            try:
+                from src.services.cache_params import get_cache_safe_params
+                cache_safe_params = get_cache_safe_params()
+            except ImportError:
+                cache_safe_params = None
+            summary_text = await forked_agent_fn(compact_msgs, cache_safe_params)
+        else:
+            async for event in create_stream_fn(
+                compact_msgs,
+                [],
+                NO_TOOLS_PREAMBLE.strip(),
+            ):
+                if event.type == "text_delta":
+                    summary_text += event.data.get("text", "")
 
         if not summary_text.strip():
             _consecutive_failures += 1
@@ -445,7 +458,7 @@ async def compact_with_llm(
         result = apply_compaction(messages, summary_text)
         result_tokens = count_tokens(result)
         if partial and result_tokens > max_tokens * 0.9:
-            return await compact_with_llm(messages, max_tokens, create_stream_fn, custom_instructions, partial=False)
+            return await compact_with_llm(messages, max_tokens, create_stream_fn, custom_instructions, partial=False, forked_agent_fn=forked_agent_fn)
         _consecutive_failures = 0
         return result
 
@@ -669,7 +682,75 @@ async def auto_compact_with_priority(
 
 
 def _inject_post_compact_context(messages: list[dict]) -> list[dict]:
-    return _restore_recent_file_reads(messages)
+    messages = _restore_recent_file_reads(messages)
+    messages = _restore_skill_descriptions(messages)
+    return messages
+
+
+SKILL_RESTORE_TOKEN_BUDGET = 25000
+MAX_TOKENS_PER_SKILL = 5000
+
+
+def _restore_skill_descriptions(
+    messages: list[dict],
+    token_budget: int = SKILL_RESTORE_TOKEN_BUDGET,
+    max_tokens_per_skill: int = MAX_TOKENS_PER_SKILL,
+) -> list[dict]:
+    skill_descriptions: list[tuple[str, str]] = []
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    if "[Skill:" in text or "[技能:" in text:
+                        skill_name = _extract_skill_name(text)
+                        if skill_name:
+                            desc = text[:max_tokens_per_skill * 4]
+                            skill_descriptions.append((skill_name, desc))
+
+    if not skill_descriptions:
+        return messages
+
+    used_tokens = 0
+    injection_lines = ["[压缩后恢复] 以下技能描述在压缩前被识别，已恢复供参考：\n"]
+    for name, desc in skill_descriptions:
+        est_tokens = len(desc) // 4
+        if used_tokens + est_tokens > token_budget:
+            break
+        injection_lines.append(f"--- 技能: {name} ---\n{desc[:max_tokens_per_skill * 4]}\n")
+        used_tokens += est_tokens
+
+    if len(injection_lines) <= 1:
+        return messages
+
+    injection_msg = {
+        "role": "user",
+        "content": "\n".join(injection_lines),
+        "_post_compact_injection": True,
+        "is_meta": True,
+    }
+
+    system = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+
+    boundary_idx = 0
+    for i, m in enumerate(non_system):
+        if is_compact_boundary(m):
+            boundary_idx = i
+            break
+
+    return system + non_system[:boundary_idx + 1] + [injection_msg] + non_system[boundary_idx + 1:]
+
+
+def _extract_skill_name(text: str) -> str | None:
+    import re
+    match = re.search(r'\[(?:Skill|技能):([^\]]+)\]', text)
+    if match:
+        return match.group(1).strip()
+    return None
 
 
 def _restore_recent_file_reads(messages: list[dict], max_files: int = 5, max_chars_per_file: int = 5000) -> list[dict]:
@@ -724,4 +805,194 @@ def _restore_recent_file_reads(messages: list[dict], max_files: int = 5, max_cha
             break
 
     result = system + non_system[:boundary_idx + 1] + [injection_msg] + non_system[boundary_idx + 1:]
+    return result
+
+
+@dataclass
+class PendingCacheEdits:
+    trigger: str = "auto"
+    deleted_tool_ids: list[str] = field(default_factory=list)
+    baseline_cache_deleted_tokens: int = 0
+
+
+@dataclass
+class CacheEditsBlock:
+    edits: list[dict[str, Any]] = field(default_factory=list)
+    cache_reference: str = ""
+
+
+@dataclass
+class CachedMCState:
+    registered_tools: set[str] = field(default_factory=set)
+    tool_groups: list[list[str]] = field(default_factory=list)
+    pinned_edits: list[dict[str, Any]] = field(default_factory=list)
+
+
+_cached_mc_state: CachedMCState | None = None
+_pending_cache_edits: CacheEditsBlock | None = None
+
+
+def _get_cached_mc_state() -> CachedMCState:
+    global _cached_mc_state
+    if _cached_mc_state is None:
+        _cached_mc_state = CachedMCState()
+    return _cached_mc_state
+
+
+def consume_pending_cache_edits() -> CacheEditsBlock | None:
+    global _pending_cache_edits
+    edits = _pending_cache_edits
+    _pending_cache_edits = None
+    return edits
+
+
+def get_pinned_cache_edits() -> list[dict[str, Any]]:
+    state = _get_cached_mc_state()
+    return list(state.pinned_edits)
+
+
+def pin_cache_edits(user_message_index: int, block: CacheEditsBlock) -> None:
+    state = _get_cached_mc_state()
+    state.pinned_edits.append({
+        "user_message_index": user_message_index,
+        "block": {"edits": block.edits, "cache_reference": block.cache_reference},
+    })
+
+
+def _collect_compactable_tool_ids(messages: list[dict]) -> set[str]:
+    compactable = set()
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls", [])
+        for tc in tool_calls:
+            if isinstance(tc, dict):
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                if name not in ("TodoWrite", "TodoRead"):
+                    compactable.add(tc.get("id", ""))
+    return compactable
+
+
+def cached_micro_compact(
+    messages: list[dict],
+    content_replacement_state: Any | None = None,
+    config: dict[str, Any] | None = None,
+) -> tuple[list[dict], PendingCacheEdits | None]:
+    global _pending_cache_edits
+
+    state = _get_cached_mc_state()
+    compactable_ids = _collect_compactable_tool_ids(messages)
+
+    for msg in messages:
+        if msg.get("role") == "user":
+            content = msg.get("content")
+            if isinstance(content, list):
+                group_ids: list[str] = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_use_id = block.get("tool_use_id", "")
+                        if tool_use_id in compactable_ids and tool_use_id not in state.registered_tools:
+                            state.registered_tools.add(tool_use_id)
+                            group_ids.append(tool_use_id)
+                if group_ids:
+                    state.tool_groups.append(group_ids)
+        elif msg.get("role") == "tool":
+            tool_call_id = msg.get("tool_call_id", "")
+            if tool_call_id in compactable_ids and tool_call_id not in state.registered_tools:
+                state.registered_tools.add(tool_call_id)
+                state.tool_groups.append([tool_call_id])
+
+    tools_to_delete: list[str] = []
+    for group in state.tool_groups:
+        if len(group) > 1:
+            for tid in group[:-1]:
+                tools_to_delete.append(tid)
+        elif len(group) == 1:
+            tools_to_delete.append(group[0])
+
+    if not tools_to_delete:
+        return messages, None
+
+    edits = [{"type": "cache_delete", "tool_use_id": tid} for tid in tools_to_delete]
+    cache_edits_block = CacheEditsBlock(
+        edits=edits,
+        cache_reference="auto_compact",
+    )
+    _pending_cache_edits = cache_edits_block
+
+    last_asst = None
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            last_asst = m
+            break
+
+    baseline = 0
+    if last_asst:
+        usage = last_asst.get("usage", {})
+        if isinstance(usage, dict):
+            baseline = usage.get("cache_deleted_input_tokens", 0)
+
+    pending = PendingCacheEdits(
+        trigger="auto",
+        deleted_tool_ids=tools_to_delete,
+        baseline_cache_deleted_tokens=baseline,
+    )
+
+    return messages, pending
+
+
+def maybe_time_based_microcompact(
+    messages: list[dict],
+    query_source: str = "",
+    threshold_seconds: int = TIME_BASED_MICROCOMPACT_THRESHOLD_SECONDS,
+    keep_recent: int = TIME_BASED_MICROCOMPACT_KEEP_RECENT,
+) -> list[dict] | None:
+    if query_source in ("session_memory", "compact", "marble_origami"):
+        return None
+
+    now = time.time()
+    last_assistant_time: float | None = None
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            msg_time = msg.get("_timestamp") or msg.get("created_at")
+            if msg_time:
+                try:
+                    if isinstance(msg_time, (int, float)):
+                        last_assistant_time = float(msg_time)
+                    else:
+                        from datetime import datetime as _dt
+                        last_assistant_time = _dt.fromisoformat(str(msg_time)).timestamp()
+                except (ValueError, TypeError):
+                    pass
+            break
+
+    if last_assistant_time is None:
+        return None
+
+    elapsed = now - last_assistant_time
+    if elapsed < threshold_seconds:
+        return None
+
+    tool_result_indices: list[int] = []
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "tool":
+            tool_result_indices.append(i)
+
+    if len(tool_result_indices) <= keep_recent:
+        return None
+
+    recent_indices = set(tool_result_indices[-keep_recent:])
+    result = []
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "tool" and i not in recent_indices and i in set(tool_result_indices):
+            new_msg = dict(msg)
+            original_len = len(str(new_msg.get("content", "")))
+            new_msg["content"] = OLD_TOOL_RESULT_CLEAR_MARKER
+            if "_original_content_length" not in new_msg:
+                new_msg["_original_content_length"] = original_len
+            result.append(new_msg)
+        else:
+            result.append(msg)
+
     return result

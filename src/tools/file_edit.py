@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ class FileEditTool(Tool):
             new_lines = input.new_string.splitlines()
             lines[input.start_line - 1 : input.end_line] = new_lines
             path.write_text("\n".join(lines), encoding="utf-8")
+            _update_file_state_cache(str(path), context)
             return ToolResult(
                 output=f"已编辑 {input.file_path} (行 {input.start_line}-{input.end_line}, {len(old_range)} 行 -> {len(new_lines)} 行)"
             )
@@ -65,6 +67,8 @@ class FileEditTool(Tool):
         new_content = content.replace(input.old_string, input.new_string)
         path.write_text(new_content, encoding="utf-8")
 
+        _update_file_state_cache(str(path), context)
+
         old_lines = input.old_string.count("\n") + 1
         new_lines = input.new_string.count("\n") + 1
         return ToolResult(output=f"已编辑 {input.file_path} ({old_lines} 行 -> {new_lines} 行)")
@@ -82,4 +86,24 @@ def _backup_file(path: Path, context: Any) -> None:
         if len(file_history) > 50:
             file_history.pop(0)
     except Exception:
+        pass
+
+
+def _update_file_state_cache(file_path: str, context: Any) -> None:
+    read_file_state = getattr(context, "read_file_state", None)
+    if read_file_state is None:
+        return
+
+    try:
+        mtime = os.path.getmtime(file_path)
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            disk_content = f.read()
+        from src.services.file_state_cache import FileState
+        read_file_state.set(file_path, FileState(
+            content=disk_content,
+            timestamp=mtime,
+            offset=None,
+            limit=None,
+        ))
+    except OSError:
         pass

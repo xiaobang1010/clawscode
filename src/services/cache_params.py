@@ -17,6 +17,7 @@ class CacheSafeParams:
     user_context: dict[str, str] = field(default_factory=dict)
     system_context: dict[str, str] = field(default_factory=dict)
     fork_context_messages: list[dict] = field(default_factory=list)
+    max_output_tokens: int | None = None
 
 
 _last_cache_safe_params: CacheSafeParams | None = None
@@ -42,6 +43,7 @@ def build_cache_safe_params(
     user_context: dict[str, str] | None = None,
     system_context: dict[str, str] | None = None,
     fork_context_messages: list[dict] | None = None,
+    max_output_tokens: int | None = None,
 ) -> CacheSafeParams:
     prefix = messages[:prefix_count] if prefix_count > 0 else []
     return CacheSafeParams(
@@ -54,6 +56,7 @@ def build_cache_safe_params(
         user_context=user_context or {},
         system_context=system_context or {},
         fork_context_messages=fork_context_messages or [],
+        max_output_tokens=max_output_tokens,
     )
 
 
@@ -63,6 +66,7 @@ def compute_cache_key(params: CacheSafeParams) -> str:
         "tools": params.tools,
         "messages_prefix": params.messages_prefix,
         "model": params.model,
+        "max_output_tokens": params.max_output_tokens,
     }
     key_str = json.dumps(key_data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(key_str.encode()).hexdigest()
@@ -74,4 +78,5 @@ def cache_params_match(a: CacheSafeParams, b: CacheSafeParams) -> bool:
         and a.tools == b.tools
         and a.model == b.model
         and a.messages_prefix == b.messages_prefix
+        and a.max_output_tokens == b.max_output_tokens
     )

@@ -40,6 +40,12 @@ class EnterPlanModeTool(Tool):
         checker.set_mode(PermissionMode.PLAN)
         context.settings.permission_mode = "plan"
 
+        tools = getattr(context, "tools", None)
+        if tools is not None:
+            from src.services.agent_context import refresh_agent_definitions
+            refreshed = refresh_agent_definitions(tools, permission_mode="plan")
+            context.tools = refreshed
+
         lines = ["已进入 Plan（规划）模式。"]
         if input.plan_description:
             lines.append(f"规划目标: {input.plan_description}")

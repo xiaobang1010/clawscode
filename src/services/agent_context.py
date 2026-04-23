@@ -15,6 +15,42 @@ class AgentType(str, Enum):
     TEAMMATE = "teammate"
 
 
+AGENT_PERMISSION_MAP: dict[str, set[str]] = {
+    "plan": {"explore", "plan"},
+    "default": {"general", "explore", "plan", "verification", "custom"},
+    "bypass": {"general", "explore", "plan", "verification", "custom"},
+    "auto": {"general", "explore", "plan", "verification", "custom"},
+}
+
+
+def refresh_agent_definitions(
+    available_tools: list[Any],
+    permission_mode: str = "default",
+) -> list[Any]:
+    allowed_types = AGENT_PERMISSION_MAP.get(
+        permission_mode,
+        AGENT_PERMISSION_MAP.get("default", set()),
+    )
+
+    allowed_agent_names: set[str] = set()
+    filtered_tools = []
+
+    for tool in available_tools:
+        agent_type = getattr(tool, "agent_type", None)
+        if agent_type is not None:
+            if agent_type in allowed_types:
+                allowed_agent_names.add(tool.name)
+                filtered_tools.append(tool)
+        else:
+            filtered_tools.append(tool)
+
+    for tool in filtered_tools:
+        if hasattr(tool, "_allowed_agent_names"):
+            tool._allowed_agent_names = allowed_agent_names
+
+    return filtered_tools
+
+
 @dataclass
 class SubagentContext:
     agent_id: str
@@ -227,6 +263,8 @@ def create_subagent_context(
         read_file_state=clone_file_state_cache(
             overrides.read_file_state if overrides.read_file_state else parent_context.read_file_state
         ),
+        # nestedMemoryAttachmentTriggers: isolated — subagents start with an empty set so they don't
+        # inherit or pollute the parent's nested memory attachment triggers.
         nested_memory_attachment_triggers=set(),
         loaded_nested_memory_paths=set(),
         dynamic_skill_dir_triggers=set(),

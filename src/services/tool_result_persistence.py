@@ -162,6 +162,17 @@ def cleanup_tool_results(base_dir: Path | None = None, max_age_days: int = 7) ->
     return deleted_count
 
 
+def get_large_output_instructions(raw_output_path: str, content_length: int, format_description: str = "", max_read_length: int = 8000) -> str:
+    instructions = "\n\n[读取指令]\n"
+    instructions += f"完整输出已保存至: {raw_output_path} (共 {content_length:,} 字节)\n"
+    instructions += "你必须使用文件读取工具逐块读取完整内容后再生成摘要或分析。\n"
+    instructions += "每次读取后必须明确声明读取进度（如\"已读取 X-Y 行\"）。\n"
+    instructions += "如果内容被截断，减小块大小后重新读取。\n"
+    instructions += "不要假装已读完所有内容。\n"
+    instructions += "不要对未读取的部分进行任何猜测或总结。\n"
+    return instructions
+
+
 def build_large_tool_result_message(result: PersistedToolResult) -> str:
     def format_size(size: int) -> str:
         if size < 1024:
@@ -176,6 +187,7 @@ def build_large_tool_result_message(result: PersistedToolResult) -> str:
     message += f"Preview (first {format_size(PREVIEW_SIZE_BYTES)}):\n"
     message += result.preview
     message += "...\n" if result.has_more else "\n"
+    message += get_large_output_instructions(raw_output_path=result.filepath, content_length=result.original_size)
     message += "[END PERSISTED OUTPUT]"
 
     return message
@@ -211,8 +223,109 @@ def maybe_persist_large_tool_result(
     return tool_result_block
 
 
-def get_persistence_threshold(tool_name: str, max_result_size: int) -> int:
-    if max_result_size == float("inf"):
+def get_persistence_threshold(tool_name: str, max_result_size_chars: int) -> int:
+    if tool_name in _tool_threshold_registry:
+        registered = _tool_threshold_registry[tool_name]
+        if max_result_size_chars == float("inf"):
+            return registered
+        return min(max_result_size_chars, registered)
+
+    if max_result_size_chars == float("inf"):
         return PERSISTENCE_THRESHOLD
 
-    return min(max_result_size, PERSISTENCE_THRESHOLD)
+    return min(max_result_size_chars, PERSISTENCE_THRESHOLD)
+
+
+_tool_threshold_registry: dict[str, int] = {}
+
+
+def register_tool_threshold(tool_name: str, max_result_size_chars: int) -> None:
+    _tool_threshold_registry[tool_name] = max_result_size_chars
+
+
+_MIME_TO_EXTENSION: dict[str, str] = {
+    "application/pdf": ".pdf",
+    "application/json": ".json",
+    "text/csv": ".csv",
+    "text/html": ".html",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/ogg": ".ogg",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+}
+
+_BINARY_MIME_PREFIXES = (
+    "application/pdf",
+    "application/vnd.",
+    "audio/",
+    "video/",
+    "image/",
+)
+
+
+def extension_for_mime_type(mime_type: str) -> str:
+    ext = _MIME_TO_EXTENSION.get(mime_type)
+    if ext:
+        return ext
+    if "/" in mime_type:
+        subtype = mime_type.split("/")[-1]
+        return f".{subtype}"
+    return ".bin"
+
+
+def is_binary_content_type(content_type: str) -> bool:
+    if content_type in _MIME_TO_EXTENSION:
+        return True
+    return content_type.startswith(_BINARY_MIME_PREFIXES)
+
+
+def persist_binary_content(
+    data: bytes,
+    mime_type: str,
+    persist_id: str,
+    base_dir: Path | None = None,
+) -> str | None:
+    try:
+        tool_results_dir = ensure_tool_results_dir(base_dir)
+        ext = extension_for_mime_type(mime_type)
+        safe_id = persist_id.replace("/", "_").replace("\\", "_")
+        filepath = tool_results_dir / f"{safe_id}{ext}"
+        filepath.write_bytes(data)
+        return str(filepath)
+    except OSError:
+        return None
+
+
+def get_binary_blob_saved_message(
+    filepath: str,
+    mime_type: str,
+    size: int,
+    source_description: str = "",
+) -> str:
+    def format_size(s: int) -> str:
+        if s < 1024:
+            return f"{s} bytes"
+        elif s < 1024 * 1024:
+            return f"{s / 1024:.1f} KB"
+        else:
+            return f"{s / (1024 * 1024):.1f} MB"
+
+    message = f"[BINARY CONTENT SAVED]\n"
+    message += f"二进制内容已保存至: {filepath}\n"
+    message += f"类型: {mime_type} | 大小: {format_size(size)}"
+    if source_description:
+        message += f" | 来源: {source_description}"
+    message += "\n使用文件读取工具查看此文件。"
+    return message

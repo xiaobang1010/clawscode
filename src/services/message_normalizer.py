@@ -8,8 +8,11 @@ def normalize_messages_for_api(messages: list[dict[str, Any]]) -> list[dict[str,
         return []
 
     filtered = _filter_valid_messages(messages)
+    filtered = _filter_meta_messages(filtered)
+    sanitize_error_tool_result_content(filtered)
+    strip_oversized_content_blocks(filtered)
     merged = _merge_consecutive_user_messages(filtered)
-    return merged
+    return reorder_attachments_for_api(merged)
 
 
 def _filter_valid_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -35,6 +38,10 @@ def _filter_valid_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         result.append(msg)
 
     return result
+
+
+def _filter_meta_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [msg for msg in messages if not msg.get("is_meta") and not msg.get("is_visible_in_transcript_only")]
 
 
 def _merge_consecutive_user_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -234,3 +241,159 @@ def normalize_tool_input_for_api(tool_input: dict[str, Any]) -> dict[str, Any]:
             normalized[key] = str(value)
 
     return normalized
+
+
+def _is_attachment_message(msg: dict[str, Any]) -> bool:
+    if msg.get("type") != "user":
+        return False
+    content = msg.get("content")
+    if isinstance(content, list):
+        return any(
+            isinstance(b, dict) and b.get("type") == "attachment"
+            for b in content
+        )
+    return False
+
+
+def _has_tool_result(msg: dict[str, Any]) -> bool:
+    content = msg.get("content")
+    if isinstance(content, list):
+        return any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in content
+        )
+    return False
+
+
+def reorder_attachments_for_api(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not messages:
+        return []
+
+    reversed_result: list[dict[str, Any]] = []
+    pending_attachments: list[dict[str, Any]] = []
+
+    for msg in reversed(messages):
+        is_stop = (
+            msg.get("type") == "assistant"
+            or (msg.get("type") == "user" and _has_tool_result(msg))
+        )
+
+        if _is_attachment_message(msg):
+            pending_attachments.append(msg)
+            continue
+
+        if is_stop:
+            for att in reversed(pending_attachments):
+                reversed_result.append(att)
+            pending_attachments = []
+            reversed_result.append(msg)
+        else:
+            reversed_result.append(msg)
+
+    for att in reversed(pending_attachments):
+        reversed_result.append(att)
+
+    reversed_result.reverse()
+    return reversed_result
+
+
+_ERROR_TO_BLOCK_TYPES: dict[str, set[str]] = {
+    "pdf": {"document"},
+    "image": {"image"},
+    "media": {"image", "document"},
+    "request": {"document", "image"},
+}
+
+_ERROR_KEYWORDS: list[tuple[str, str]] = [
+    ("pdf", "pdf"),
+    ("image", "image"),
+    ("media size", "media"),
+    ("request too large", "request"),
+    ("prompt too long", "request"),
+    ("too large", "media"),
+]
+
+
+def _classify_error_type(error_text: str) -> str | None:
+    lower = error_text.lower()
+    for keyword, error_type in _ERROR_KEYWORDS:
+        if keyword in lower:
+            return error_type
+    return None
+
+
+def strip_oversized_content_blocks(messages: list[dict[str, Any]]) -> None:
+    strip_targets: dict[str, set[str]] = {}
+
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "tool_result":
+                continue
+            if not block.get("is_error"):
+                continue
+            error_text = ""
+            if isinstance(block.get("content"), str):
+                error_text = block["content"]
+            elif isinstance(block.get("content"), list):
+                for sub in block["content"]:
+                    if isinstance(sub, dict) and sub.get("type") == "text":
+                        error_text += sub.get("text", "")
+            error_type = _classify_error_type(error_text)
+            if error_type is None:
+                continue
+            block_types = _ERROR_TO_BLOCK_TYPES.get(error_type, set())
+            source_uuid = block.get("source_uuid") or block.get("_source_user_uuid")
+            if source_uuid:
+                existing = strip_targets.get(source_uuid, set())
+                existing.update(block_types)
+                strip_targets[source_uuid] = existing
+
+    if not strip_targets:
+        return
+
+    for msg in messages:
+        msg_uuid = msg.get("uuid", "")
+        if msg_uuid not in strip_targets:
+            continue
+        if not msg.get("is_meta"):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        block_types_to_strip = strip_targets[msg_uuid]
+        filtered = [
+            b for b in content
+            if not (isinstance(b, dict) and b.get("type") in block_types_to_strip)
+        ]
+        msg["content"] = filtered
+
+
+def sanitize_error_tool_result_content(messages: list[dict[str, Any]]) -> None:
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        has_error_tool_result = False
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                has_error_tool_result = True
+                break
+        if not has_error_tool_result:
+            continue
+        filtered = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                inner = block.get("content")
+                if isinstance(inner, list):
+                    text_only = [b for b in inner if isinstance(b, dict) and b.get("type") == "text"]
+                    if len(text_only) != len(inner):
+                        block = {**block, "content": text_only}
+                filtered.append(block)
+            else:
+                filtered.append(block)
+        msg["content"] = filtered

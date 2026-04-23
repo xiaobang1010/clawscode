@@ -27,15 +27,18 @@ async def create_stream(
     base_url: str = "https://api-inference.modelscope.cn/v1",
     cache_system_prompt: bool = True,
     cache_messages: bool = False,
+    cache_edits: list[dict] | None = None,
+    cache_reference: str | None = None,
+    skip_cache_write: bool = False,
 ) -> AsyncGenerator[StreamEvent, None]:
     client = create_client(api_key or "", base_url)
 
     system_msg: dict = {"role": "system", "content": system}
-    if cache_system_prompt:
+    if cache_system_prompt and not skip_cache_write:
         system_msg["cache_control"] = {"type": "ephemeral"}
     openai_messages = [system_msg] + messages
 
-    if cache_messages and openai_messages:
+    if cache_messages and not skip_cache_write and openai_messages:
         for i in range(len(openai_messages) - 1, -1, -1):
             if openai_messages[i].get("role") == "user":
                 openai_messages[i]["cache_control"] = {"type": "ephemeral"}
@@ -50,6 +53,10 @@ async def create_stream(
     }
     if tools:
         kwargs["tools"] = tools
+    if cache_edits:
+        kwargs["cache_edits"] = cache_edits
+    if cache_reference:
+        kwargs["cache_reference"] = cache_reference
 
     last_exc: Exception | None = None
     for attempt in range(3):
