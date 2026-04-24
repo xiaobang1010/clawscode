@@ -8,6 +8,7 @@ from src.skills.bundled.stuck import create_stuck_skill
 from src.skills.bundled.verify import create_verify_skill
 from src.skills.bundled.remember import create_remember_skill
 from src.skills.bundled.simplify import create_simplify_skill
+from src.skills.bundled.dream import create_dream_skill
 
 
 def get_builtin_skills() -> list[SkillDefinition]:
@@ -19,6 +20,7 @@ def get_builtin_skills() -> list[SkillDefinition]:
         create_verify_skill(),
         create_remember_skill(),
         create_simplify_skill(),
+        create_dream_skill(),
     ]
 
 

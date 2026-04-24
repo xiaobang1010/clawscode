@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -34,16 +35,50 @@ class SkillTool(Tool):
             )
 
         prompt = skill.get_prompt_for_command
+
+        prompt = self._apply_variable_substitutions(prompt, skill, context)
+
+        if skill.disable_model_invocation:
+            return ToolResult(
+                output=prompt,
+                metadata={"allowed_tools": skill.allowed_tools, "skill_name": skill.name},
+            )
+
         if input.arguments:
             try:
                 prompt = prompt.format(**input.arguments)
             except (KeyError, IndexError):
                 pass
 
+        if skill.context == "fork":
+            return ToolResult(
+                output=f'Skill "{skill.name}" (fork 模式) 已启动。\n\n{prompt}',
+                metadata={
+                    "allowed_tools": skill.allowed_tools,
+                    "skill_name": skill.name,
+                    "context": "fork",
+                    "agent": skill.agent,
+                },
+            )
+
+        base_dir_prefix = ""
+        if skill.skill_dir:
+            base_dir_prefix = f"Base directory for this skill: {skill.skill_dir}\n\n"
+
         return ToolResult(
-            output=f'Skill "{skill.name}" 已加载。\n\n{prompt}',
+            output=f'{base_dir_prefix}Skill "{skill.name}" 已加载。\n\n{prompt}',
             metadata={"allowed_tools": skill.allowed_tools, "skill_name": skill.name},
         )
+
+    def _apply_variable_substitutions(self, prompt: str, skill: Any, context: Any) -> str:
+        if skill.skill_dir:
+            prompt = prompt.replace("${CLAWSCODE_SKILL_DIR}", skill.skill_dir)
+
+        session_id = getattr(context, "session_id", "")
+        if session_id:
+            prompt = prompt.replace("${CLAWSCODE_SESSION_ID}", session_id)
+
+        return prompt
 
     def _get_registry(self):
         from src.skills.registry import SkillRegistry

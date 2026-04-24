@@ -47,6 +47,11 @@ class HookDefinition:
     timeout: float = 30.0
     enabled: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
+    if_condition: str = ""
+    matcher: str = ""
+    once: bool = False
+    shell_type: str = ""
+    status_message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +64,11 @@ class HookDefinition:
             "timeout": self.timeout,
             "enabled": self.enabled,
             "metadata": self.metadata,
+            "if_condition": self.if_condition,
+            "matcher": self.matcher,
+            "once": self.once,
+            "shell_type": self.shell_type,
+            "status_message": self.status_message,
         }
 
 

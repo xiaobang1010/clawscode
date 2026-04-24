@@ -56,7 +56,7 @@ class SkillLoader:
             data = yaml.safe_load(content)
             if not isinstance(data, dict):
                 return
-            definition = self._parse_definition(data, filepath.stem)
+            definition = self._parse_definition(data, filepath.stem, str(filepath.parent))
             if definition:
                 self._loaded[definition.name] = definition
         except (OSError, ValueError, KeyError):
@@ -77,13 +77,13 @@ class SkillLoader:
             if not isinstance(data, dict):
                 return
             data["getPromptForCommand"] = data.get("getPromptForCommand", body)
-            definition = self._parse_definition(data, filepath.stem)
+            definition = self._parse_definition(data, filepath.stem, str(filepath.parent))
             if definition:
                 self._loaded[definition.name] = definition
         except (OSError, ValueError, KeyError):
             pass
 
-    def _parse_definition(self, data: dict[str, Any], fallback_name: str) -> SkillDefinition | None:
+    def _parse_definition(self, data: dict[str, Any], fallback_name: str, skill_dir: str = "") -> SkillDefinition | None:
         name = data.get("name", fallback_name)
         if not name:
             return None
@@ -96,4 +96,10 @@ class SkillLoader:
             get_prompt_for_command=data.get("getPromptForCommand", data.get("get_prompt_for_command", "")),
             aliases=data.get("aliases", []),
             metadata=data.get("metadata", {}),
+            hooks=data.get("hooks", None),
+            context=data.get("context", "inline"),
+            skill_dir=skill_dir or None,
+            agent=data.get("agent", None),
+            files=data.get("files", None),
+            disable_model_invocation=data.get("disableModelInvocation", data.get("disable_model_invocation", False)),
         )

@@ -18,11 +18,12 @@ class ToolResult(BaseModel):
     error: str | None = None
     is_error: bool = False
     metadata: dict = {}
+    structured_output: dict | None = None
 
     def truncate(self, max_chars: int = 25000) -> ToolResult:
         if len(self.output) > max_chars:
             truncated = self.output[:max_chars] + f"\n...[truncated, showed {max_chars} of {len(self.output)} chars]"
-            return ToolResult(output=truncated, error=self.error, is_error=self.is_error)
+            return ToolResult(output=truncated, error=self.error, is_error=self.is_error, structured_output=self.structured_output)
         return self
 
     @classmethod
@@ -45,6 +46,10 @@ class Tool(ABC):
     is_readonly: bool = False
     max_result_size_chars: int = 25000
     is_lazy: bool = False
+    output_schema: type[BaseModel] | None = None
+    aliases: list[str] = []
+    search_hint: str = ""
+    interrupt_behavior: str = "cancel"
 
     @abstractmethod
     async def call(self, input: BaseModel, context: Any) -> ToolResult:
@@ -77,3 +82,9 @@ class Tool(ABC):
 
     def is_available(self) -> bool:
         return True
+
+    def is_concurrency_safe(self, input: BaseModel) -> bool:
+        return False
+
+    def is_destructive(self, input: BaseModel) -> bool:
+        return False

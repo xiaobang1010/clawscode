@@ -16,8 +16,14 @@ class HookRegistry:
     def get(self, name: str) -> HookDefinition | None:
         return self._hooks.get(name)
 
-    def find_by_event(self, event: HookEvent) -> list[HookDefinition]:
-        return [h for h in self._hooks.values() if h.event == event and h.enabled]
+    def find_by_event(self, event: HookEvent, tool_name: str = "") -> list[HookDefinition]:
+        hooks = [h for h in self._hooks.values() if h.event == event and h.enabled]
+        if tool_name:
+            hooks = [
+                h for h in hooks
+                if not h.matcher or h.matcher == tool_name or _fnmatch_simple(tool_name, h.matcher)
+            ]
+        return hooks
 
     def find_all_enabled(self) -> list[HookDefinition]:
         return [h for h in self._hooks.values() if h.enabled]
@@ -51,7 +57,17 @@ class HookRegistry:
                     timeout=float(cfg.get("timeout", 30.0)),
                     enabled=cfg.get("enabled", True),
                     metadata=cfg.get("metadata", {}),
+                    if_condition=cfg.get("if", cfg.get("if_condition", "")),
+                    matcher=cfg.get("matcher", ""),
+                    once=cfg.get("once", False),
+                    shell_type=cfg.get("shell_type", ""),
+                    status_message=cfg.get("status_message", ""),
                 )
                 self.register(hook)
             except (KeyError, ValueError):
                 continue
+
+
+def _fnmatch_simple(name: str, pattern: str) -> bool:
+    import fnmatch
+    return fnmatch.fnmatch(name, pattern)

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
-import shutil
-import subprocess
+
+logger = logging.getLogger(__name__)
 
 SAFE_COMMANDS = {
     "ls", "dir", "cat", "head", "tail", "less", "more",
@@ -98,24 +99,57 @@ def classify_bash_command(command: str) -> str:
     if not command:
         return "safe"
 
-    for pattern in DANGEROUS_PATTERNS:
-        if re.search(pattern, command, re.IGNORECASE):
+    from src.services.bash_validators import _load_validators, run_all_validators
+    _load_validators()
+
+    results = run_all_validators(command)
+    if results:
+        critical = [r for r in results if r.severity == "critical"]
+        if critical:
+            return "dangerous"
+        high = [r for r in results if r.severity == "high"]
+        if len(high) >= 1:
             return "dangerous"
 
-    base_cmd = command.split()[0] if command.split() else ""
-    base_name = base_cmd.split("/")[-1] if "/" in base_cmd else base_cmd
+    for pattern in DANGEROUS_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            regex_result = "dangerous"
+            break
+    else:
+        base_cmd = command.split()[0] if command.split() else ""
+        base_name = base_cmd.split("/")[-1] if "/" in base_cmd else base_cmd
 
-    if base_name in SAFE_COMMANDS:
-        return "safe"
+        if base_name in SAFE_COMMANDS:
+            regex_result = "safe"
+        elif any(re.match(p, command) for p in SAFE_PATTERNS):
+            regex_result = "safe"
+        elif _is_git_safe(command):
+            regex_result = "safe"
+        else:
+            regex_result = "unknown"
 
-    for pattern in SAFE_PATTERNS:
-        if re.match(pattern, command):
-            return "safe"
+    try:
+        from src.services.bash_ast import cross_validate_with_regex
+        final_result = cross_validate_with_regex(command, regex_result)
+    except ImportError:
+        final_result = regex_result
 
-    if _is_git_safe(command):
-        return "safe"
+    return final_result
 
-    return "unknown"
+
+def get_validation_details(command: str) -> list[dict]:
+    command = command.strip()
+    if not command:
+        return []
+
+    from src.services.bash_validators import _load_validators, run_all_validators
+    _load_validators()
+
+    results = run_all_validators(command)
+    return [
+        {"validator": r.reason, "severity": r.severity}
+        for r in results
+    ]
 
 
 def _is_git_safe(command: str) -> bool:

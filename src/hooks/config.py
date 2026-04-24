@@ -41,6 +41,11 @@ def load_hooks_from_settings(settings: dict[str, Any] | None = None) -> list[Hoo
                 timeout=float(cfg.get("timeout", 30.0)),
                 enabled=cfg.get("enabled", True),
                 metadata=cfg.get("metadata", {}),
+                if_condition=cfg.get("if", cfg.get("if_condition", "")),
+                matcher=cfg.get("matcher", ""),
+                once=cfg.get("once", False),
+                shell_type=cfg.get("shell_type", ""),
+                status_message=cfg.get("status_message", ""),
             )
             definitions.append(hook)
         except (KeyError, ValueError):
@@ -80,6 +85,11 @@ def get_hooks_config_schema() -> dict[str, Any]:
                     "agent_type": {"type": "string", "description": "Agent Hook 的类型"},
                     "timeout": {"type": "number", "description": "超时秒数"},
                     "enabled": {"type": "boolean", "description": "是否启用"},
+                    "if": {"type": "string", "description": "条件过滤（权限规则语法）"},
+                    "matcher": {"type": "string", "description": "工具名匹配模式"},
+                    "once": {"type": "boolean", "description": "是否为一次性 Hook"},
+                    "shell_type": {"type": "string", "enum": ["bash", "powershell"], "description": "Shell 类型"},
+                    "status_message": {"type": "string", "description": "自定义状态消息"},
                 },
             },
         },

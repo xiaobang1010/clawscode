@@ -2,8 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 
 from src.hooks.types import HookContext, HookDefinition, HookResult
+
+
+def _get_shell_command(hook: HookDefinition) -> list[str]:
+    if hook.shell_type == "powershell":
+        if sys.platform == "win32":
+            return ["powershell", "-Command", hook.command]
+        return ["pwsh", "-Command", hook.command]
+    elif hook.shell_type == "bash":
+        return ["bash", "-c", hook.command]
+    else:
+        return [hook.command]
 
 
 class PromptHook:
@@ -19,12 +31,23 @@ class PromptHook:
         }, ensure_ascii=False)
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                hook.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            cmd_parts = _get_shell_command(hook)
+
+            if len(cmd_parts) == 1:
+                proc = await asyncio.create_subprocess_shell(
+                    cmd_parts[0],
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd_parts,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(env_input.encode()),
                 timeout=hook.timeout,
