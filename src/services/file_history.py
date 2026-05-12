@@ -5,10 +5,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from src.boot.paths import RUNTIME_DATA_DIR_NAME
+
 
 MAX_SNAPSHOTS = 50
 HISTORY_DIR_NAME = "file_history"
-CLAWSCODE_DIR_NAME = ".clawscode"
 
 
 @dataclass
@@ -23,7 +24,7 @@ class FileHistory:
     def __init__(self, cwd: Path, max_snapshots: int = MAX_SNAPSHOTS):
         self._cwd = cwd
         self._max_snapshots = max_snapshots
-        self._history_dir = cwd / CLAWSCODE_DIR_NAME / HISTORY_DIR_NAME
+        self._history_dir = cwd / RUNTIME_DATA_DIR_NAME / HISTORY_DIR_NAME
         self._snapshots: list[FileSnapshot] = []
 
     def create_snapshot(self, file_path: str | Path) -> FileSnapshot | None:

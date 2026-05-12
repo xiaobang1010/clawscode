@@ -45,7 +45,7 @@ class SidechainSession:
 
 class SidechainStorage:
     def __init__(self, base_dir: Path | None = None):
-        self._base_dir = base_dir or Path.home() / ".clawscode" / "sidechains"
+        self._base_dir = base_dir or get_sidechain_dir()
         self._base_dir.mkdir(parents=True, exist_ok=True)
 
     def record_sidechain_transcript(

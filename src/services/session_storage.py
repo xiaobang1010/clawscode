@@ -10,11 +10,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.boot.paths import RUNTIME_DATA_DIR_NAME
 from .message_uuid import generate_uuid, MessageChain
 
 
 SESSIONS_DIR_NAME = "sessions"
-CLAWSCODE_DIR_NAME = ".clawscode"
 SESSION_FILE_SUFFIX = ".jsonl"
 LEGACY_FILE_SUFFIX = ".json"
 MAX_TRANSCRIPT_READ_BYTES = 50 * 1024 * 1024
@@ -95,7 +95,7 @@ class SessionStorage:
             self._sessions_dir = Path(storage_path)
         else:
             self._home = home or Path.home()
-            self._sessions_dir = self._home / CLAWSCODE_DIR_NAME / SESSIONS_DIR_NAME
+            self._sessions_dir = self._home / RUNTIME_DATA_DIR_NAME / SESSIONS_DIR_NAME
         self._sessions_dir.mkdir(parents=True, exist_ok=True)
         self._write_queue: list[tuple[Path, str, asyncio.Future | None]] = []
         self._flush_timer: threading.Timer | None = None

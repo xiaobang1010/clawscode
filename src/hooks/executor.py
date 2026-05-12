@@ -38,8 +38,9 @@ class HookExecutor:
             if result.should_block:
                 break
 
-        for name in hooks_to_remove:
-            self._registry.unregister(name)
+        if not self._registry.is_frozen:
+            for name in hooks_to_remove:
+                self._registry.unregister(name)
 
         return results
 

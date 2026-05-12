@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import typer
 
@@ -30,8 +31,8 @@ def main(
 
 
 async def _run(prompt: str | None, model: str | None, print_mode: bool, resume: str | None) -> None:
-    from src.state import AppState
-    from src.config import load_config
+    from src.boot import load_config, build_hook_snapshot, create_client
+    from src.boot.state import AppState
     from src.services.session_restore import SessionRestore
     from src.services.session_storage import SessionStorage
     from src.services.session_title import generate_title
@@ -43,6 +44,9 @@ async def _run(prompt: str | None, model: str | None, print_mode: bool, resume: 
 
     state = AppState(settings=settings)
     state.mcp_servers = mcp_servers
+
+    if settings.api_key:
+        state.llm_client = create_client(settings.api_key, settings.base_url)
 
     from src.services.cost_tracker import CostTrackerService
     state.cost_tracker_service = CostTrackerService(
@@ -71,6 +75,8 @@ async def _run(prompt: str | None, model: str | None, print_mode: bool, resume: 
             else:
                 console.print("没有可恢复的历史会话", style="bold yellow")
 
+    state.hook_snapshot = build_hook_snapshot(settings)
+
     if prompt is not None:
         state.messages.append({"role": "user", "content": prompt})
         if not state.session_title:
@@ -90,16 +96,15 @@ async def _run_repl(state: AppState, initial_prompt: str | None = None) -> None:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
 
+    from src.boot.paths import get_history_dir
     from src.commands import CommandRegistry, register_commands
     from src.repl import console
 
-    history_dir = state.cwd / ".clawscode"
+    history_dir = get_history_dir(state.cwd)
     history_dir.mkdir(exist_ok=True)
     session = PromptSession(history=FileHistory(str(history_dir / "history")))
     registry = CommandRegistry()
     register_commands(registry)
-
-    mcp_client = await _init_mcp(state)
 
     if initial_prompt is None:
         console.print("clawscode - AI 编程助手", style="bold green")
@@ -129,36 +134,26 @@ async def _run_repl(state: AppState, initial_prompt: str | None = None) -> None:
             await _run_query(state, user_input)
     finally:
         try:
-            from src.hooks.types import HookContext, HookEvent
-            from src.hooks.executor import HookExecutor
-            from src.hooks.config import load_hooks_into_registry
-            from src.hooks.registry import HookRegistry
-            settings_dict = None
-            if hasattr(state, 'settings') and hasattr(state.settings, 'hooks'):
-                hooks_cfg = state.settings.hooks
-                if hooks_cfg.enabled:
-                    settings_dict = {"hooks": hooks_cfg.hooks}
-            if settings_dict is not None:
-                reg = HookRegistry()
-                count = load_hooks_into_registry(reg, settings=settings_dict)
-                if count > 0:
-                    executor = HookExecutor(reg)
-                    ctx = HookContext(event=HookEvent.SESSION_END, session_id=state.session_id)
-                    await executor.execute(ctx)
+            if state.hook_snapshot is not None:
+                from src.hooks.types import HookContext, HookEvent
+                ctx = HookContext(event=HookEvent.SESSION_END, session_id=state.session_id)
+                await state.hook_snapshot.execute(ctx)
         except Exception:
             pass
+        mcp_client = getattr(state, "_mcp_client", None)
         if mcp_client is not None:
             await mcp_client.disconnect_all()
 
 
-async def _init_mcp(state: AppState) -> Any:
-    from src.services.mcp_client import MCPClient
-    from src.tools.mcp_tool import MCPToolAdapter
-
+async def _lazy_init_mcp(state: AppState) -> None:
     if not state.mcp_servers:
         state._mcp_client = None
         state._extra_tools = []
-        return None
+        return
+
+    from src.services.mcp_client import MCPClient
+    from src.tools.mcp_tool import MCPToolAdapter
+    from src.repl import console
 
     client = MCPClient(state.mcp_servers)
     await client.connect_all()
@@ -183,15 +178,18 @@ async def _init_mcp(state: AppState) -> Any:
             console.print(f"MCP: 已加载 {len(mcp_tools)} 个工具", style="dim")
 
     state._extra_tools = mcp_tools
-    return client
 
 
 async def _run_query(state: AppState, user_input: str) -> None:
     from src.context import build_context
-    from src.query import handle_query
+    from src.query_loop import handle_query
     from src.repl import render_stream
     from src.compact import compact_if_needed
     from src.permissions import PermissionChecker
+
+    if not hasattr(state, '_extra_tools') or state._extra_tools is None:
+        state._extra_tools = []
+        await _lazy_init_mcp(state)
 
     tools = []
     try:

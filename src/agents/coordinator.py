@@ -7,6 +7,8 @@ from typing import Any
 from src.agents.agent_definition import AgentDefinition, AgentType
 from src.agents.builder import AgentBuilder
 from src.agents.builtins import get_builtin_agents
+from openai import AsyncOpenAI
+
 from src.api_client import create_stream
 from src.services.prompt_builder import COORDINATOR_SYSTEM_TEMPLATE
 from src.tool import Tool, ToolResult
@@ -48,12 +50,14 @@ class Coordinator:
         api_key: str = "",
         base_url: str = "https://api-inference.modelscope.cn/v1",
         max_turns: int = 30,
+        client: AsyncOpenAI | None = None,
     ):
         self._tools = tools
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
         self._max_turns = max_turns
+        self._client = client
         self._results: dict[str, str] = {}
 
     def _build_system_prompt(self) -> str:
@@ -85,6 +89,7 @@ class Coordinator:
                 model=self._model,
                 api_key=self._api_key,
                 base_url=self._base_url,
+                client=self._client,
             ):
                 if event.type == "text_delta":
                     text_parts.append(event.data.get("text", ""))

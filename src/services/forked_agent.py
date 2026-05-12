@@ -5,6 +5,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
+from openai import AsyncOpenAI
+
 from src.api_client import StreamEvent, create_stream
 from src.services.agent_context import (
     ContentReplacementState,
@@ -162,6 +164,7 @@ async def run_forked_agent(
     model: str = "",
     api_key: str = "",
     base_url: str = "",
+    client: AsyncOpenAI | None = None,
 ) -> ForkedAgentResult:
     start_time = time.time()
     output_messages: list[dict] = []
@@ -211,6 +214,7 @@ async def run_forked_agent(
                 model=model or cache_safe_params.model,
                 api_key=api_key or cache_safe_params.api_key,
                 base_url=base_url or cache_safe_params.base_url,
+                client=client,
                 **stream_kwargs,
             ):
                 if event.type == "text_delta":

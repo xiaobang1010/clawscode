@@ -13,6 +13,8 @@ from src.agents.builder import AgentBuilder
 from src.agents.display import AgentDisplayManager
 from src.agents.memory import AgentMemory, MemoryScope
 from src.agents.builtins import get_builtin_agents
+from openai import AsyncOpenAI
+
 from src.api_client import StreamEvent, create_stream
 from src.services.agent_context import (
     AgentContextManager,
@@ -106,6 +108,7 @@ async def _run_agent_loop(
     agent_name: str = "",
     agent_ctx: SubagentContext | None = None,
     agent_state: dict | None = None,
+    client: AsyncOpenAI | None = None,
 ) -> str:
     ctx_mgr = AgentContextManager()
     if agent_ctx is not None:
@@ -139,6 +142,7 @@ async def _run_agent_loop(
                 model=model,
                 api_key=api_key,
                 base_url=base_url,
+                client=client,
             ):
                 if event.type == "text_delta":
                     text_parts.append(event.data.get("text", ""))
@@ -291,9 +295,11 @@ class AgentTool(Tool):
 
         api_key = ""
         base_url = "https://api-inference.modelscope.cn/v1"
+        llm_client = None
         if context:
             api_key = getattr(context.settings, "api_key", "")
             base_url = getattr(context.settings, "base_url", base_url)
+            llm_client = getattr(context, "llm_client", None)
 
         if is_fork:
             cached_params = get_cache_safe_params()
@@ -387,7 +393,8 @@ class AgentTool(Tool):
                         await self._fire_subagent_hook(context, HookEvent.SUBAGENT_START, input.name or "fork", agent_id)
                         _display_manager.activate(agent_id)
                         result = await run_forked_agent(
-                            fork_params, agent_tools, model, api_key, base_url
+                            fork_params, agent_tools, model, api_key, base_url,
+                            client=llm_client,
                         )
                         result_text = extract_result_text(result.messages)
                         summary = _summarize_result(result_text)
@@ -410,7 +417,8 @@ class AgentTool(Tool):
             _display_manager.activate(agent_id)
             try:
                 result = await run_forked_agent(
-                    fork_params, agent_tools, model, api_key, base_url
+                    fork_params, agent_tools, model, api_key, base_url,
+                    client=llm_client,
                 )
                 result_text = extract_result_text(result.messages)
                 summary = _summarize_result(result_text)
@@ -441,6 +449,7 @@ class AgentTool(Tool):
                         agent_name=definition.name,
                         agent_ctx=agent_ctx,
                         agent_state=isolated_state,
+                        client=llm_client,
                     )
                     summary = _summarize_result(result_text)
                     bg_task.complete(summary)
@@ -467,6 +476,7 @@ class AgentTool(Tool):
                 agent_name=definition.name,
                 agent_ctx=agent_ctx,
                 agent_state=isolated_state,
+                client=llm_client,
             )
             summary = _summarize_result(result_text)
 

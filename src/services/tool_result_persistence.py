@@ -28,7 +28,7 @@ class PersistToolResultError:
 
 def get_tool_results_dir(base_dir: Path | None = None) -> Path:
     if base_dir is None:
-        base_dir = Path.home() / ".clawscode"
+        base_dir = get_tool_result_dir()
     return base_dir / TOOL_RESULTS_SUBDIR
 
 

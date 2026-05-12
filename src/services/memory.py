@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.boot.paths import RUNTIME_DATA_DIR_NAME
+
+
 MEMORY_FILENAME = "MEMORY.md"
 MEMORY_DIR_NAME = "memdir"
-CLAWSCODE_DIR_NAME = ".clawscode"
 
 
 class MemoryDiscovery:
@@ -17,11 +19,11 @@ class MemoryDiscovery:
     def discover_all(self) -> list[tuple[Path, str]]:
         results: list[tuple[Path, str]] = []
 
-        home_memory = self._home / CLAWSCODE_DIR_NAME / self._memdir_name / MEMORY_FILENAME
+        home_memory = self._home / RUNTIME_DATA_DIR_NAME / self._memdir_name / MEMORY_FILENAME
         if home_memory.exists() and home_memory.is_file():
             results.append((home_memory, "home"))
 
-        project_memory = self._cwd / CLAWSCODE_DIR_NAME / self._memdir_name / MEMORY_FILENAME
+        project_memory = self._cwd / RUNTIME_DATA_DIR_NAME / self._memdir_name / MEMORY_FILENAME
         if project_memory.exists() and project_memory.is_file():
             results.append((project_memory, "project"))
 

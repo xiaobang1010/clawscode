@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.boot.paths import RUNTIME_DATA_DIR_NAME
+
 CLAUDE_MD_FILENAME = "CLAUDE.md"
-CLAWSCODE_DIR_NAME = ".clawscode"
 
 
 class ClaudeMdDiscovery:
@@ -18,7 +19,7 @@ class ClaudeMdDiscovery:
         if home_md.exists() and home_md.is_file():
             results.append((home_md, "home"))
 
-        home_clawscode = self._home / CLAWSCODE_DIR_NAME / CLAUDE_MD_FILENAME
+        home_clawscode = self._home / RUNTIME_DATA_DIR_NAME / CLAUDE_MD_FILENAME
         if home_clawscode.exists() and home_clawscode.is_file():
             results.append((home_clawscode, "home_clawscode"))
 
@@ -26,7 +27,7 @@ class ClaudeMdDiscovery:
         if project_root_md.exists() and project_root_md.is_file():
             results.append((project_root_md, "project_root"))
 
-        project_clawscode_md = self._cwd / CLAWSCODE_DIR_NAME / CLAUDE_MD_FILENAME
+        project_clawscode_md = self._cwd / RUNTIME_DATA_DIR_NAME / CLAUDE_MD_FILENAME
         if project_clawscode_md.exists() and project_clawscode_md.is_file():
             results.append((project_clawscode_md, "project_clawscode"))
 

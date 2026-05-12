@@ -6,11 +6,23 @@ from src.hooks.types import HookDefinition, HookEvent, HookType
 class HookRegistry:
     def __init__(self) -> None:
         self._hooks: dict[str, HookDefinition] = {}
+        self._frozen: bool = False
+
+    def freeze(self) -> None:
+        self._frozen = True
+
+    @property
+    def is_frozen(self) -> bool:
+        return self._frozen
 
     def register(self, hook: HookDefinition) -> None:
+        if self._frozen:
+            return
         self._hooks[hook.name] = hook
 
     def unregister(self, name: str) -> None:
+        if self._frozen:
+            return
         self._hooks.pop(name, None)
 
     def get(self, name: str) -> HookDefinition | None:

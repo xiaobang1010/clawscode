@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from src.boot.paths import RUNTIME_DATA_DIR_NAME
+
 
 MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4": {"input": 0.03, "output": 0.06},
@@ -16,7 +18,6 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "default": {"input": 0.003, "output": 0.015},
 }
 
-CLAWSCODE_DIR_NAME = ".clawscode"
 COST_FILE_NAME = "cost_history.json"
 
 
@@ -58,7 +59,7 @@ class CostTrackerService:
     def __init__(self, model: str = "default", home: Path | None = None, custom_pricing: dict[str, dict[str, float]] | None = None):
         self._model = model
         self._home = home or Path.home()
-        self._cost_file = self._home / CLAWSCODE_DIR_NAME / COST_FILE_NAME
+        self._cost_file = self._home / RUNTIME_DATA_DIR_NAME / COST_FILE_NAME
         self._entries: list[CostEntry] = []
         self._session_summary = CostSummary()
         self._pricing = {**MODEL_PRICING, **(custom_pricing or {})}

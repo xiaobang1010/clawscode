@@ -46,7 +46,7 @@ class KairosLogger:
     def flush(self) -> None:
         if not self._events:
             return
-        kairos_dir = self._cwd / ".clawscode" / "kairos"
+        kairos_dir = get_kairos_dir(self._cwd)
         kairos_dir.mkdir(parents=True, exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
         path = kairos_dir / f"{date_str}.jsonl"

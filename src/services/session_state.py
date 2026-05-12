@@ -5,10 +5,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from src.boot.paths import RUNTIME_DATA_DIR_NAME
 from src.state import SessionState
 
 
-CLAWSCODE_DIR_NAME = ".clawscode"
 STATE_FILE_NAME = "session_state.json"
 
 
@@ -17,7 +17,7 @@ class SessionStateManager:
         self._cwd = cwd
         self._state = SessionState.IDLE
         self._listeners: list[Callable[[SessionState, SessionState], None]] = []
-        self._state_file = cwd / CLAWSCODE_DIR_NAME / STATE_FILE_NAME
+        self._state_file = cwd / RUNTIME_DATA_DIR_NAME / STATE_FILE_NAME
 
     @property
     def state(self) -> SessionState:

@@ -11,6 +11,8 @@ from src.agents.agent_definition import AgentDefinition
 from src.agents.builtins import get_builtin_agents
 from src.agents.builder import AgentBuilder
 from src.agents.display import AgentDisplayManager
+from openai import AsyncOpenAI
+
 from src.api_client import create_stream
 from src.services.agent_context import AgentContextManager, SubagentContext, create_isolated_agent_state, generate_agent_id
 from src.tool import Tool, ToolResult
@@ -137,7 +139,7 @@ class SwarmDispatchTool(Tool):
     input_schema = SwarmDispatchInput
     is_readonly = False
 
-    async def _execute_member(self, member: SwarmMember, task: str) -> str:
+    async def _execute_member(self, member: SwarmMember, task: str, client: AsyncOpenAI | None = None) -> str:
         from src.tools import get_tools
         import json as _json
 
@@ -174,6 +176,7 @@ class SwarmDispatchTool(Tool):
                     tools=tool_schemas,
                     system=system_prompt,
                     model=model,
+                    client=client,
                 ):
                     if event.type == "text_delta":
                         text_parts.append(event.data.get("text", ""))
@@ -234,15 +237,16 @@ class SwarmDispatchTool(Tool):
             return ToolResult(output="团队没有成员", is_error=True)
 
         members = list(team.members.values())
+        llm_client = getattr(context, "llm_client", None) if context else None
 
         if input.parallel:
             results = await asyncio.gather(
-                *[self._execute_member(m, input.task) for m in members]
+                *[self._execute_member(m, input.task, client=llm_client) for m in members]
             )
         else:
             results = []
             for m in members:
-                result = await self._execute_member(m, input.task)
+                result = await self._execute_member(m, input.task, client=llm_client)
                 results.append(result)
 
         output_parts = []

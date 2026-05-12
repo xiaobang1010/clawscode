@@ -1,26 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from src.hooks.types import HookDefinition, HookEvent, HookType
 from src.hooks.registry import HookRegistry
-from src.utils.settings import load_settings
-
-
-_DEFAULT_CONFIG_PATHS = [
-    Path.home() / ".clawscode" / "settings.json",
-    Path.cwd() / ".clawscode" / "settings.json",
-]
 
 
 def load_hooks_from_settings(settings: dict[str, Any] | None = None) -> list[HookDefinition]:
     if settings is None:
-        merged: dict[str, Any] = {}
-        for path in _DEFAULT_CONFIG_PATHS:
-            cfg = load_settings(path)
-            merged.update(cfg)
-        settings = merged
+        return []
 
     hooks_config = settings.get("hooks", [])
     if not isinstance(hooks_config, list):

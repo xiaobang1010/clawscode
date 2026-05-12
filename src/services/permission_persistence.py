@@ -3,17 +3,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from src.boot.paths import RUNTIME_DATA_DIR_NAME
+
 
 SETTINGS_FILENAME = "settings.json"
-CLAWSCODE_DIR_NAME = ".clawscode"
 
 
 class PermissionPersistence:
     def __init__(self, cwd: Path, home: Path | None = None):
         self._cwd = cwd
         self._home = home or Path.home()
-        self._project_settings_path = cwd / CLAWSCODE_DIR_NAME / SETTINGS_FILENAME
-        self._user_settings_path = self._home / CLAWSCODE_DIR_NAME / SETTINGS_FILENAME
+        self._project_settings_path = cwd / RUNTIME_DATA_DIR_NAME / SETTINGS_FILENAME
+        self._user_settings_path = self._home / RUNTIME_DATA_DIR_NAME / SETTINGS_FILENAME
 
     def load_rules(self) -> dict:
         rules: dict = {

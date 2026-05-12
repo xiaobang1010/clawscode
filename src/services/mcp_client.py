@@ -15,6 +15,8 @@ import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from src.boot.paths import get_mcp_token_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,7 +96,7 @@ class MCPServerHealth:
 class MCPOAuthProvider:
     def __init__(self, token_storage_path: Path | None = None) -> None:
         self._tokens: dict[str, OAuthToken] = {}
-        self._token_storage_path = token_storage_path or Path.home() / ".clawscode" / "mcp_oauth_tokens.json"
+        self._token_storage_path = token_storage_path or get_mcp_token_path()
         self._pending_requests: dict[str, asyncio.Future[str]] = {}
 
     def _server_token_key(self, server_name: str) -> str:

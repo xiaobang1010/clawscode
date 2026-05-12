@@ -10,6 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from src.boot.paths import get_global_memdir, get_memdir
+
 logger = logging.getLogger(__name__)
 
 
@@ -224,9 +226,9 @@ class AgentMemory:
             return Path(remote_dir)
 
         if scope == MemoryScope.USER:
-            return self._home / ".clawscode" / "memdir"
+            return get_global_memdir()
         elif scope == MemoryScope.PROJECT:
-            return self._cwd / ".clawscode" / "memdir"
+            return get_memdir(self._cwd)
         else:
             return self._cwd / "memdir"
 
@@ -367,9 +369,9 @@ class AgentMemory:
 
     def save_to_file(self, content: str, scope: MemoryScope = MemoryScope.PROJECT) -> bool:
         if scope == MemoryScope.USER:
-            target_dir = self._home / ".clawscode" / "memdir"
+            target_dir = get_global_memdir()
         elif scope == MemoryScope.PROJECT:
-            target_dir = self._cwd / ".clawscode" / "memdir"
+            target_dir = get_memdir(self._cwd)
         else:
             target_dir = self._cwd / "memdir"
 
